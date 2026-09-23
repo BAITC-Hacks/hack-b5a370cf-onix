@@ -6,6 +6,7 @@ import {
   bestSwap,
   contributions,
   districtName,
+  getEvent,
   getMeasure,
   optimize,
   simulate,
@@ -30,6 +31,7 @@ export interface Explanation {
 
 export interface ExplainContext {
   decisions: Decision[];
+  eventId: string | null;
   result: SimulationResult;
   contributions: Contribution[];
   optimum: RankedPlan;
@@ -43,12 +45,13 @@ const label = (d: Decision) => {
   return `${m.id} «${m.name}» — ${districtName(d.districtId)} (стоимость ${m.cost}, лаг ${m.lag} кв.)`;
 };
 
-export function buildContext(decisions: Decision[]): ExplainContext {
-  const [optimum] = optimize(1);
+export function buildContext(decisions: Decision[], eventId: string | null = null): ExplainContext {
+  const [optimum] = optimize(1, eventId);
   return {
     decisions,
-    result: simulate(decisions),
-    contributions: contributions(decisions),
+    eventId,
+    result: simulate(decisions, eventId),
+    contributions: contributions(decisions, eventId),
     optimum,
     optimumScore: optimum.score,
     planLabel: decisions.map(label),
@@ -60,7 +63,19 @@ export function buildContext(decisions: Decision[]): ExplainContext {
 function factsForLLM(ctx: ExplainContext) {
   const r = ctx.result;
   return {
-    правила: { бюджет: RULES.budget, решений: RULES.decisions, горизонт_кварталов: RULES.horizon, порог_критического_значения: RULES.criticalThreshold },
+    городское_событие: (() => {
+      const ev = getEvent(ctx.eventId);
+      return ev
+        ? {
+            название: ev.title,
+            описание: ev.description,
+            сокращение_бюджета: ev.budgetCut,
+            удар_по_показателям: ev.shocks.map((s) => `${districtName(s.districtId)}: ${INDICATOR_INFO[s.indicator].name} ${s.delta}`),
+            базовый_score_без_события: r.baseScoreNoEvent,
+          }
+        : "нет";
+    })(),
+    правила: { бюджет: r.budget, решений: RULES.decisions, горизонт_кварталов: RULES.horizon, порог_критического_значения: RULES.criticalThreshold },
     формула: "Score = 0.7 × средневзвешенный по населению балл районов + 0.3 × балл самого слабого района − 1 × число показателей ниже 40",
     выбранный_набор: ctx.planLabel,
     итог: {
@@ -94,7 +109,7 @@ function factsForLLM(ctx: ExplainContext) {
       реализованная_доля_эффекта: `${Math.round(c.realizedShare * 100)}%`,
     })),
     лучшая_одиночная_замена: (() => {
-      const s = bestSwap(ctx.decisions);
+      const s = bestSwap(ctx.decisions, ctx.eventId);
       return s ? { убрать: label(s.remove), добавить: label(s.add), новый_score: s.newScore, прирост: s.gain } : "замен, улучшающих Score, нет";
     })(),
     оптимальный_набор_по_полному_перебору: { score: ctx.optimumScore, меры: ctx.optimumLabel },
@@ -109,6 +124,7 @@ const SYSTEM_PROMPT = `Ты — аналитик городского разви
 - Говори конкретно: какая мера, в каком районе, какой показатель, как изменился.
 - Отдельно отметь компромиссы: что пришлось не делать и какой район/направление остался без внимания.
 - В рекомендациях сравни с оптимальным набором из JSON и назови конкретные замены.
+- Если есть городское событие — оцени, насколько сценарий на него отвечает (закрыт ли удар по показателям, хватило ли урезанного бюджета).
 Ответ строго JSON без markdown:
 {"summary": "2-3 предложения", "strengths": ["..."], "risks": ["..."], "tradeoffs": ["..."], "recommendations": ["..."]}
 В каждом списке 2-4 пункта, каждый пункт — одно-два предложения.`;
@@ -176,8 +192,8 @@ function findUnverifiedNumbers(e: Omit<Explanation, "source">, facts: unknown): 
   return [...suspicious];
 }
 
-export async function explain(decisions: Decision[]): Promise<Explanation> {
-  const ctx = buildContext(decisions);
+export async function explain(decisions: Decision[], eventId: string | null = null): Promise<Explanation> {
+  const ctx = buildContext(decisions, eventId);
   const facts = factsForLLM(ctx);
   const prompt = `Результаты расчёта сценария:\n${JSON.stringify(facts, null, 1)}`;
 
@@ -232,8 +248,21 @@ export function fallbackExplanation(ctx: ExplainContext): Explanation {
     tradeoffs.push(`Районы без адресных мер: ${untouched.join(", ")}${cityWide ? " (получают только эффект городских программ)" : ""}.`);
   if (r.remainingBudget > 0) tradeoffs.push(`Остаток бюджета ${r.remainingBudget} не даёт бонуса — его можно направить на ещё одну меру через замену.`);
 
+  const ev = getEvent(ctx.eventId);
+  if (ev) {
+    for (const sh of ev.shocks) {
+      const d = r.districts.find((x) => x.id === sh.districtId)!;
+      const v = d.after[sh.indicator];
+      const answered = v > d.before[sh.indicator];
+      risks.unshift(
+        `Событие «${ev.title}»: ${d.name}, ${INDICATOR_INFO[sh.indicator].name} = ${v}${v < RULES.criticalThreshold ? " — всё ещё ниже порога 40" : ""}${answered ? " (сценарий реагирует на удар)" : " (сценарий не реагирует на удар)"}.`,
+      );
+    }
+    if (ev.budgetCut) tradeoffs.unshift(`Из-за события бюджет сокращён на ${ev.budgetCut}: доступно ${r.budget}.`);
+  }
+
   const recommendations: string[] = [];
-  const swap = bestSwap(ctx.decisions);
+  const swap = bestSwap(ctx.decisions, ctx.eventId);
   if (swap) recommendations.push(`Лучшая одиночная замена: ${label(swap.remove)} → ${label(swap.add)}. Score станет ${swap.newScore} (+${swap.gain}).`);
   const gap = Math.round((ctx.optimumScore - r.score) * 100) / 100;
   if (gap <= 0.01) recommendations.push(`Ваш набор совпадает с оптимумом полного перебора (Score ${ctx.optimumScore}).`);
@@ -248,7 +277,7 @@ export function fallbackExplanation(ctx: ExplainContext): Explanation {
   }
 
   return {
-    summary: `Сценарий стоит ${r.cost} из ${RULES.budget} и даёт Astana Quality of Life Score ${r.score} (${fmt(r.delta)} к базе ${r.baseScore}). Средний балл города ${r.dAvg}, самый слабый район — ${r.weakestDistrict} (${r.minD}), критических значений: ${r.criticalCount}.`,
+    summary: `${ev ? `С учётом события «${ev.title}» с` : "С"}ценарий стоит ${r.cost} из ${r.budget} и даёт Astana Quality of Life Score ${r.score} (${fmt(r.delta)} к базе ${r.baseScore}). Средний балл города ${r.dAvg}, самый слабый район — ${r.weakestDistrict} (${r.minD}), критических значений: ${r.criticalCount}.`,
     strengths: strengths.length ? strengths : ["Ни одна мера заметно не повлияла на Score."],
     risks,
     tradeoffs: tradeoffs.length ? tradeoffs : ["Заметных компромиссов нет: затронуты все направления и районы."],

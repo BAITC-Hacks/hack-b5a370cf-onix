@@ -70,3 +70,12 @@ test("оптимизатор находит набор лучше примера
   assert.ok(validate(best.decisions).ok);
   assert.ok(best.score >= 57.2, `best=${best.score}`);
 });
+
+test("городские события: удар по показателям и сокращение бюджета", () => {
+  const heating = simulate([], "heating");
+  assert.ok(heating.baseScore < 52.56);
+  assert.ok(heating.critical.some((c) => c.district === "Алматы" && c.indicator === "C1"));
+  assert.equal(validate(example, "transfer").ok, false, "пример за 95 не влезает в бюджет 85");
+  assert.ok(validate(example, "transfer").errors.some((e) => e.includes("из 85")));
+  assert.ok(validate(example).ok);
+});

@@ -5,11 +5,13 @@ import {
   CONFLICTS,
   DIRECTION_LABELS,
   DISTRICTS,
+  EVENTS,
   INDICATOR_INFO,
   INDICATORS,
   MEASURES,
   RULES,
   SYNERGIES,
+  type CityEvent,
   type Direction,
   type Indicator,
   type IndicatorValues,
@@ -27,17 +29,33 @@ export interface ValidationResult {
   cost: number;
 }
 
+const round = (x: number, p = 2) => Math.round(x * 10 ** p) / 10 ** p;
+const clip = (x: number) => Math.min(100, Math.max(0, x));
+
 const measureById = new Map(MEASURES.map((m) => [m.id, m]));
 const districtById = new Map(DISTRICTS.map((d) => [d.id, d]));
 
 export const getMeasure = (id: string): Measure | undefined => measureById.get(id);
 export const districtName = (id?: string | null) => (id ? districtById.get(id)?.name ?? id : "весь город");
 
+export const getEvent = (id?: string | null): CityEvent | undefined => (id ? EVENTS.find((e) => e.id === id) : undefined);
+export const budgetFor = (eventId?: string | null) => RULES.budget - (getEvent(eventId)?.budgetCut ?? 0);
+
+/** Стартовые значения районов с учётом события (до принятия мер). */
+function startValues(eventId?: string | null): Map<string, IndicatorValues> {
+  const map = new Map<string, IndicatorValues>(DISTRICTS.map((d) => [d.id, { ...d.values }]));
+  for (const sh of getEvent(eventId)?.shocks ?? []) {
+    const vals = map.get(sh.districtId)!;
+    vals[sh.indicator] = clip(vals[sh.indicator] + sh.delta);
+  }
+  return map;
+}
+
 export function realizedShare(m: Measure): number {
   return (RULES.horizon - m.lag) / RULES.horizon;
 }
 
-export function validate(decisions: Decision[]): ValidationResult {
+export function validate(decisions: Decision[], eventId?: string | null): ValidationResult {
   const errors: string[] = [];
   let cost = 0;
 
@@ -63,7 +81,8 @@ export function validate(decisions: Decision[]): ValidationResult {
     seen.add(d.measureId);
   }
 
-  if (cost > RULES.budget) errors.push(`Бюджет превышен: ${cost} из ${RULES.budget}.`);
+  const budget = budgetFor(eventId);
+  if (cost > budget) errors.push(`Бюджет превышен: ${cost} из ${budget}.`);
 
   const perDirection = new Map<Direction, number>();
   for (const d of decisions) {
@@ -118,8 +137,11 @@ export interface CriticalCell {
 export interface SimulationResult {
   score: number;
   baseScore: number;
+  /** Базовый Score без события — для сравнения. */
+  baseScoreNoEvent: number;
   delta: number;
   cost: number;
+  budget: number;
   remainingBudget: number;
   dAvg: number;
   minD: number;
@@ -130,8 +152,6 @@ export interface SimulationResult {
   synergies: { pair: string; indicator: Indicator; bonus: number; district: string }[];
 }
 
-const round = (x: number, p = 2) => Math.round(x * 10 ** p) / 10 ** p;
-const clip = (x: number) => Math.min(100, Math.max(0, x));
 
 function districtScore(values: IndicatorValues): number {
   let s = 0;
@@ -140,8 +160,9 @@ function districtScore(values: IndicatorValues): number {
 }
 
 /** Ядро расчёта без валидации — используется и оптимизатором. */
-function compute(decisions: Decision[]) {
-  const raw = new Map<string, IndicatorValues>(DISTRICTS.map((d) => [d.id, { ...d.values }]));
+function compute(decisions: Decision[], eventId?: string | null) {
+  const start = startValues(eventId);
+  const raw = new Map<string, IndicatorValues>([...start].map(([id, v]) => [id, { ...v }]));
   const targets = (d: Decision) => (d.districtId ? [d.districtId] : DISTRICTS.map((x) => x.id));
 
   for (const d of decisions) {
@@ -173,9 +194,9 @@ function compute(decisions: Decision[]) {
       id: d.id,
       name: d.name,
       population: d.population,
-      before: d.values,
+      before: start.get(d.id)!,
       after,
-      scoreBefore: districtScore(d.values),
+      scoreBefore: districtScore(start.get(d.id)!),
       scoreAfter: districtScore(after),
     };
   });
@@ -189,19 +210,22 @@ function compute(decisions: Decision[]) {
 
 export const BASE_SCORE = compute([]).score;
 
-export function scoreOnly(decisions: Decision[]): number {
-  return compute(decisions).score;
+export function scoreOnly(decisions: Decision[], eventId?: string | null): number {
+  return compute(decisions, eventId).score;
 }
 
-export function simulate(decisions: Decision[]): SimulationResult {
-  const r = compute(decisions);
+export function simulate(decisions: Decision[], eventId?: string | null): SimulationResult {
+  const r = compute(decisions, eventId);
+  const base = eventId ? compute([], eventId).score : BASE_SCORE;
   const cost = decisions.reduce((s, d) => s + (measureById.get(d.measureId)?.cost ?? 0), 0);
   return {
     score: round(r.score),
-    baseScore: round(BASE_SCORE),
-    delta: round(r.score - BASE_SCORE),
+    baseScore: round(base),
+    baseScoreNoEvent: round(BASE_SCORE),
+    delta: round(r.score - base),
     cost,
-    remainingBudget: RULES.budget - cost,
+    budget: budgetFor(eventId),
+    remainingBudget: budgetFor(eventId) - cost,
     dAvg: round(r.dAvg),
     minD: round(r.weakest.scoreAfter),
     weakestDistrict: r.weakest.name,
@@ -218,12 +242,12 @@ export function simulate(decisions: Decision[]): SimulationResult {
 }
 
 /** Вклад каждой меры: leave-one-out по Score + прямые приросты показателей. */
-export function contributions(decisions: Decision[]): Contribution[] {
-  const full = scoreOnly(decisions);
+export function contributions(decisions: Decision[], eventId?: string | null): Contribution[] {
+  const full = scoreOnly(decisions, eventId);
   return decisions.map((d) => {
     const m = measureById.get(d.measureId)!;
     const share = realizedShare(m);
-    const without = scoreOnly(decisions.filter((x) => x !== d));
+    const without = scoreOnly(decisions.filter((x) => x !== d), eventId);
     const targets = d.districtId ? [districtName(d.districtId)] : ["весь город"];
     return {
       measureId: m.id,
@@ -246,11 +270,14 @@ export interface RankedPlan {
   cost: number;
 }
 
-let optimumCache: RankedPlan[] | null = null;
+const optimumCache = new Map<string, RankedPlan[]>();
 
 /** Полный перебор всех допустимых наборов (~700 тыс.) — находит глобальный оптимум по правилам ТЗ. */
-export function optimize(top = 5): RankedPlan[] {
-  if (optimumCache) return optimumCache.slice(0, top);
+export function optimize(top = 5, eventId?: string | null): RankedPlan[] {
+  const key = eventId ?? "";
+  const cached = optimumCache.get(key);
+  if (cached) return cached.slice(0, top);
+  const budget = budgetFor(eventId);
   const best: RankedPlan[] = [];
   const keep = 20;
   const ids = MEASURES.map((m) => m.id);
@@ -264,12 +291,12 @@ export function optimize(top = 5): RankedPlan[] {
 
   for (const combo of combos(0, [])) {
     const ms = combo.map((id) => measureById.get(id)!);
-    if (ms.reduce((s, m) => s + m.cost, 0) > RULES.budget) continue;
+    if (ms.reduce((s, m) => s + m.cost, 0) > budget) continue;
     const options = ms.map((m) => (m.scope === "city" ? [null] : DISTRICTS.map((d) => d.id)));
     const place = (i: number, acc: Decision[]) => {
       if (i === ms.length) {
-        if (!validate(acc).ok) return;
-        const score = scoreOnly(acc);
+        if (!validate(acc, eventId).ok) return;
+        const score = scoreOnly(acc, eventId);
         if (best.length < keep || score > best[best.length - 1].score) {
           best.push({ decisions: acc, score, cost: ms.reduce((s, m) => s + m.cost, 0) });
           best.sort((a, b) => b.score - a.score);
@@ -282,8 +309,9 @@ export function optimize(top = 5): RankedPlan[] {
     place(0, []);
   }
 
-  optimumCache = best.map((p) => ({ ...p, score: round(p.score) }));
-  return optimumCache.slice(0, top);
+  const ranked = best.map((p) => ({ ...p, score: round(p.score) }));
+  optimumCache.set(key, ranked);
+  return ranked.slice(0, top);
 }
 
 export interface SwapSuggestion {
@@ -294,8 +322,8 @@ export interface SwapSuggestion {
 }
 
 /** Лучшая замена одной меры на другую (с учётом всех правил) — практичная подсказка «что поменять». */
-export function bestSwap(decisions: Decision[]): SwapSuggestion | null {
-  const current = scoreOnly(decisions);
+export function bestSwap(decisions: Decision[], eventId?: string | null): SwapSuggestion | null {
+  const current = scoreOnly(decisions, eventId);
   let best: SwapSuggestion | null = null;
   decisions.forEach((out, i) => {
     for (const m of MEASURES) {
@@ -304,8 +332,8 @@ export function bestSwap(decisions: Decision[]): SwapSuggestion | null {
         const add = { measureId: m.id, districtId };
         if (add.measureId === out.measureId && add.districtId === (out.districtId ?? null)) continue;
         const next = decisions.map((d, j) => (j === i ? add : d));
-        if (!validate(next).ok) continue;
-        const s = scoreOnly(next);
+        if (!validate(next, eventId).ok) continue;
+        const s = scoreOnly(next, eventId);
         if (s - current > 0.005 && (!best || s > best.newScore))
           best = { remove: out, add, newScore: round(s), gain: round(s - current) };
       }

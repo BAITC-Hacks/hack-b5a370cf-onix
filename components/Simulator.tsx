@@ -11,9 +11,10 @@ import {
   RULES,
   SYNERGIES,
   CONFLICTS,
+  EVENTS,
   type Measure,
 } from "@/lib/data";
-import { districtName, getMeasure, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
+import { districtName, getEvent, getMeasure, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
 import type { Explanation } from "@/lib/explain";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
@@ -44,6 +45,8 @@ export default function Simulator() {
   const [optimum, setOptimum] = useState<RankedPlan[] | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [saved, setSaved] = useState<SavedScenario[]>([]);
+  const [eventId, setEventIdRaw] = useState<string | null>(null);
+  const event = getEvent(eventId);
 
   useEffect(() => {
     try {
@@ -61,6 +64,19 @@ export default function Simulator() {
     setExplainError(null);
   };
 
+  // Событие меняет стартовые условия: сбрасываем устаревший анализ и оптимум.
+  const setEventId = (id: string | null) => {
+    setEventIdRaw(id);
+    setExplanation(null);
+    setExplainError(null);
+    setOptimum(null);
+  };
+
+  const randomEvent = () => {
+    const pool = EVENTS.filter((e) => e.id !== eventId);
+    setEventId(pool[Math.floor(Math.random() * pool.length)].id);
+  };
+
   const persist = (list: SavedScenario[]) => {
     setSaved(list);
     try {
@@ -68,8 +84,8 @@ export default function Simulator() {
     } catch {}
   };
 
-  const result = useMemo(() => simulate(decisions), [decisions]);
-  const validation = useMemo(() => validate(decisions), [decisions]);
+  const result = useMemo(() => simulate(decisions, eventId), [decisions, eventId]);
+  const validation = useMemo(() => validate(decisions, eventId), [decisions, eventId]);
   const complete = decisions.length === RULES.decisions && validation.ok;
 
   /** Причина, по которой меру нельзя добавить (с учётом всех правил, кроме «ровно 5»). */
@@ -78,7 +94,7 @@ export default function Simulator() {
     if (decisions.length >= RULES.decisions) return `Уже выбрано ${RULES.decisions} решений`;
     if (m.scope === "district" && !pickDistrict[m.id]) return "Выберите район";
     const next = [...decisions, { measureId: m.id, districtId: m.scope === "district" ? pickDistrict[m.id] : null }];
-    const errs = validate(next).errors.filter((e) => !e.startsWith("Нужно ровно"));
+    const errs = validate(next, eventId).errors.filter((e) => !e.startsWith("Нужно ровно"));
     return errs[0] ?? null;
   };
 
@@ -96,7 +112,7 @@ export default function Simulator() {
       const res = await fetch("/api/explain", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ decisions }),
+        body: JSON.stringify({ decisions, eventId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.reasons?.join(" ") ?? data.error ?? "Ошибка анализа");
@@ -111,7 +127,7 @@ export default function Simulator() {
   const runOptimize = async () => {
     setOptimizing(true);
     try {
-      const res = await fetch("/api/optimize");
+      const res = await fetch(`/api/optimize${eventId ? `?event=${eventId}` : ""}`);
       setOptimum((await res.json()).plans);
     } finally {
       setOptimizing(false);
@@ -119,11 +135,11 @@ export default function Simulator() {
   };
 
   const saveScenario = () => {
-    const name = `Сценарий ${saved.length + 1}`;
+    const name = `Сценарий ${saved.length + 1}${event ? ` · ${event.title}` : ""}`;
     persist([...saved, { name, decisions, score: result.score, cost: result.cost }]);
   };
 
-  const budgetPct = Math.min(100, (result.cost / RULES.budget) * 100);
+  const budgetPct = Math.min(100, (result.cost / result.budget) * 100);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
@@ -138,13 +154,52 @@ export default function Simulator() {
         </div>
         <div className="flex gap-3">
           <Stat label="Quality of Life Score" value={result.score.toFixed(2)} sub={`${fmt(result.delta)} к базе ${result.baseScore}`} accent />
-          <Stat label="Бюджет" value={`${result.cost} / ${RULES.budget}`} sub={`остаток ${result.remainingBudget}`} />
+          <Stat label="Бюджет" value={`${result.cost} / ${result.budget}`} sub={`остаток ${result.remainingBudget}`} />
           <Stat label="Решений" value={`${decisions.length} / ${RULES.decisions}`} sub={complete ? "набор валиден" : "выберите все 5"} />
         </div>
       </header>
 
       <div className="mb-6 h-2 w-full overflow-hidden rounded-full bg-slate-200" aria-label="Использование бюджета">
-        <div className={`h-full ${result.cost > RULES.budget ? "bg-red-500" : "bg-sky-600"}`} style={{ width: `${budgetPct}%` }} />
+        <div className={`h-full ${result.cost > result.budget ? "bg-red-500" : "bg-sky-600"}`} style={{ width: `${budgetPct}%` }} />
+      </div>
+
+      <div className={`mb-6 rounded-xl border p-4 ${event ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-semibold uppercase tracking-wider text-amber-700">Городское событие</div>
+            {event ? (
+              <>
+                <div className="font-semibold">{event.title}</div>
+                <p className="text-sm text-slate-700">{event.description}</p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {[
+                    ...event.shocks.map((sh) => `${districtName(sh.districtId)}: ${sh.indicator} ${fmt(sh.delta)}`),
+                    ...(event.budgetCut ? [`бюджет −${event.budgetCut}`] : []),
+                  ].join(" · ")}{" "}
+                  · базовый Score {result.baseScoreNoEvent} → {result.baseScore}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600">Проверьте устойчивость плана: случайное событие ухудшит показатели района или урежет бюджет, и план придётся пересобрать.</p>
+            )}
+          </div>
+          <select
+            value={eventId ?? ""}
+            onChange={(e) => setEventId(e.target.value || null)}
+            className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
+            aria-label="Выбор события"
+          >
+            <option value="">Без события</option>
+            {EVENTS.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.title}
+              </option>
+            ))}
+          </select>
+          <button onClick={randomEvent} className="rounded bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600">
+            Случайное событие
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
@@ -225,7 +280,7 @@ export default function Simulator() {
           <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
             <div className="font-semibold text-slate-700">Правила</div>
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
-              <li>Ровно {RULES.decisions} мер, без повторов, не более {RULES.maxPerDirection} из одного направления, бюджет ≤ {RULES.budget}.</li>
+              <li>Ровно {RULES.decisions} мер, без повторов, не более {RULES.maxPerDirection} из одного направления, бюджет ≤ {result.budget}.</li>
               {CONFLICTS.map((c) => (
                 <li key={c.a + c.b}>
                   {c.a} и {c.b}: {c.reason}.

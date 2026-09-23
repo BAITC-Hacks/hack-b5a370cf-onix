@@ -114,3 +114,58 @@ export const RULES = {
   avgWeight: 0.7,
   minWeight: 0.3,
 } as const;
+
+export interface CityEvent {
+  id: string;
+  title: string;
+  description: string;
+  /** Сокращение доступного бюджета. */
+  budgetCut: number;
+  /** Мгновенное ухудшение показателей района до принятия мер. */
+  shocks: { districtId: string; indicator: Indicator; delta: number }[];
+}
+
+// Неожиданные городские события (опциональный пункт ТЗ): меняют стартовые условия и требуют перераспределить бюджет.
+export const EVENTS: CityEvent[] = [
+  {
+    id: "heating",
+    title: "Прорыв теплотрассы в Алматы",
+    description: "Авария на магистральной теплосети посреди зимы: надёжность ЖКХ в районе падает ниже критического порога, растёт поток жалоб.",
+    budgetCut: 0,
+    shocks: [
+      { districtId: "almaty", indicator: "C1", delta: -12 },
+      { districtId: "almaty", indicator: "C2", delta: -5 },
+    ],
+  },
+  {
+    id: "transfer",
+    title: "Сокращение трансферта из республиканского бюджета",
+    description: "Городу урезали финансирование: на программы остаётся на 15 у.е. меньше.",
+    budgetCut: 15,
+    shocks: [],
+  },
+  {
+    id: "smog",
+    title: "Аномальный смог в Сарыарке",
+    description: "Безветренная морозная неделя: качество воздуха в частном секторе проваливается ниже порога.",
+    budgetCut: 0,
+    shocks: [{ districtId: "saryarka", indicator: "E2", delta: -8 }],
+  },
+  {
+    id: "baby-boom",
+    title: "Новый жилой массив в Есиле",
+    description: "Сдали крупный ЖК: школы и детсады района переполнены, часть классов уходит во вторую смену.",
+    budgetCut: 0,
+    shocks: [{ districtId: "esil", indicator: "S1", delta: -10 }],
+  },
+  {
+    id: "flood",
+    title: "Весенний паводок в Байконуре",
+    description: "Подтопление улиц и сетей: страдают ЖКХ и дороги, часть бюджета уходит на ликвидацию последствий.",
+    budgetCut: 10,
+    shocks: [
+      { districtId: "baikonur", indicator: "C1", delta: -10 },
+      { districtId: "baikonur", indicator: "T1", delta: -8 },
+    ],
+  },
+];
