@@ -23,6 +23,19 @@ test("пример из ТЗ: стоимость 95, Score ≈ 56.5, синер�
   assert.ok(r.synergies.some((s) => s.pair === "M10+M12"));
 });
 
+test("демо-компромисс в Нуре: парк вместо школы", () => {
+  const parkPlan = example.map((d) => d.measureId === "M7" ? { measureId: "M4", districtId: "nura" } : d);
+  assert.ok(validate(parkPlan).ok);
+  const result = simulate(parkPlan);
+  const nura = result.districts.find((d) => d.id === "nura")!;
+  assert.equal(result.cost, 86);
+  assert.equal(result.score, 55.58);
+  assert.equal(nura.before.E1, 45);
+  assert.equal(nura.after.E1, 54);
+  assert.equal(nura.before.S1, 38);
+  assert.equal(nura.after.S1, 38);
+});
+
 test("самый дешёвый набор (61) валиден", () => {
   const cheap: Decision[] = [
     { measureId: "M9", districtId: "nura" },
@@ -91,6 +104,15 @@ test("оптимизатор с ограничениями: обязательн
   const esilScore = simulate(esil.decisions).districts.find((d) => d.id === "esil")!.scoreAfter;
   assert.equal(esil.objectiveValue, esilScore);
   assert.ok(esilScore > 65);
+});
+
+test("оптимизатор не выдаёт планы с противоречивым обязательным размещением", () => {
+  const mustInclude = [{ measureId: "M8", districtId: "nura" }];
+  assert.deepEqual(optimize(1, null, { mustInclude, excludeDistricts: ["nura"] }), []);
+  assert.deepEqual(optimize(1, null, { mustInclude: [{ measureId: "M8", districtId: "mars" }] }), []);
+  assert.deepEqual(optimize(1, null, { mustInclude: [{ measureId: "M12", districtId: "nura" }] }), []);
+  assert.deepEqual(optimize(1, null, { mustInclude, exclude: ["M8"] }), []);
+  assert.deepEqual(optimize(1, null, { mustInclude: [mustInclude[0], mustInclude[0]] }), []);
 });
 
 test("траектория по кварталам: старт = база, 8-й квартал = итоговый Score", () => {

@@ -430,6 +430,15 @@ export function forEachPlan(eventId: string | null | undefined, constraints: Pla
   const exclude = new Set(constraints.exclude ?? []);
   const excludeDistricts = new Set(constraints.excludeDistricts ?? []);
   const must = constraints.mustInclude ?? [];
+  // Несовместимые ограничения не должны создавать планы, которые сам validate() отклонит.
+  if (must.length > RULES.decisions || new Set(must.map((d) => d.measureId)).size !== must.length) return;
+  for (const d of must) {
+    const m = measureById.get(d.measureId);
+    if (!m || exclude.has(d.measureId)) return;
+    if (m.scope === "city" && d.districtId != null) return;
+    if (m.scope === "district" && d.districtId != null && (!districtById.has(d.districtId) || excludeDistricts.has(d.districtId))) return;
+  }
+  const mustById = new Map(must.map((d) => [d.measureId, d]));
   const ids = MEASURES.map((m) => m.id).filter((id) => !exclude.has(id));
 
   const combos: string[][] = [];
@@ -446,7 +455,7 @@ export function forEachPlan(eventId: string | null | undefined, constraints: Pla
     if (cost > budget || !comboAllowed(ms)) continue;
     const options = ms.map((m) => {
       if (m.scope === "city") return [null];
-      const fixed = must.find((x) => x.measureId === m.id)?.districtId;
+      const fixed = mustById.get(m.id)?.districtId;
       if (fixed) return [fixed];
       return DISTRICTS.map((d) => d.id).filter((id) => !excludeDistricts.has(id));
     });

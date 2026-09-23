@@ -93,7 +93,9 @@ export default function LeaderboardPage() {
                       </td>
                       <td className="text-right font-bold text-accent-strong">{e.score.toFixed(2)}</td>
                       <td className="text-right">
-                        {e.worst !== null ? e.worst.toFixed(2) : <StatusBadge kind="crit">{tr.t("failedIn", { n: e.failed, m: 6 })}</StatusBadge>}
+                        {e.failed > 0 ? (
+                          <StatusBadge kind="crit">{tr.t("failedIn", { n: e.failed, m: 6 })}</StatusBadge>
+                        ) : typeof e.worst === "number" ? e.worst.toFixed(2) : "—"}
                       </td>
                       <td className="text-right">{e.cost}</td>
                       <td className="text-xs text-ink-2">{e.decisions.map((d) => `${d.measureId}${d.districtId ? `/${tr.district(d.districtId)}` : ""}`).join(", ")}</td>

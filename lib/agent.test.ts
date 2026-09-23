@@ -96,3 +96,27 @@ test("без ключей советник честно отказывается
   const r = await runAgent([{ role: "user", content: "привет" }], [], null);
   assert.equal(r.error, "no-key");
 });
+
+test("слова пользователя не подтверждают придуманные моделью числа", async () => {
+  process.env.OPENAI_API_KEY = "test";
+  delete process.env.ANTHROPIC_API_KEY;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Score равен 100, прирост 999." } }] }), { status: 200 })) as typeof fetch;
+  const r = await runAgent([{ role: "user", content: "У меня Score 100 и прирост 999?" }], [], null);
+  assert.deepEqual(r.unverifiedNumbers, ["100", "999"]);
+});
+
+test("выполненный поиск подтверждает свой лимит стоимости", async () => {
+  process.env.OPENAI_API_KEY = "test";
+  delete process.env.ANTHROPIC_API_KEY;
+  let step = 0;
+  globalThis.fetch = (async () => {
+    step++;
+    const message = step === 1
+      ? { role: "assistant", content: null, tool_calls: [{ id: "limit", type: "function", function: { name: "find_best_plans", arguments: JSON.stringify({ exclude: ["M3"], max_cost: 80, top: 1 }) } }] }
+      : { role: "assistant", content: "Лучший план без ЛРТ найден при лимите стоимости 80." };
+    return new Response(JSON.stringify({ choices: [{ message }] }), { status: 200 });
+  }) as typeof fetch;
+  const r = await runAgent([{ role: "user", content: "Найди лучший план без ЛРТ и в бюджете 80" }], [], null);
+  assert.equal(step, 2);
+  assert.deepEqual(r.unverifiedNumbers, []);
+});

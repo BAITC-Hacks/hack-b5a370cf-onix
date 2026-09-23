@@ -2,7 +2,7 @@
 // LLM планирует шаги и формулирует ответ, но каждое число получает только из вызовов инструментов.
 
 import { DIRECTION_LABELS, DISTRICTS, INDICATOR_INFO, MEASURES, RULES } from "./data.ts";
-import { districtName, getEvent, optimize, optimizeRobust, robustness, simulate, validate, type Decision, type PlanConstraints } from "./engine.ts";
+import { budgetFor, districtName, getEvent, optimize, optimizeRobust, robustness, simulate, validate, type Decision, type PlanConstraints } from "./engine.ts";
 import { findUnverifiedNumbersInText } from "./explain.ts";
 import { activeProvider, publicError } from "./llm.ts";
 
@@ -145,7 +145,7 @@ ${ev ? `\nАКТИВНО СОБЫТИЕ: ${ev.title}. ${ev.description}` : ""}
 - НИКОГДА не считай Score и баллы в уме. Любое число бери только из результатов инструментов.
 - Для «что если» — simulate_plan. Для «как лучше/оптимизируй/подними район» — find_best_plans с нужными ограничениями.
 - ОБЯЗАТЕЛЬНО вызывай propose_plan каждый раз, когда в ответе рекомендуешь конкретный план из 5 мер — иначе пользователь не сможет его применить.
-- В ответе сравни с текущим планом пользователя (если он есть) и назови компромисс: что теряем ради цели.
+- В ответе сравни с текущим планом пользователя (если он есть) и назови компромисс. «Теряем» только меры, которые были в текущем плане и отсутствуют в новом. Меры, которых нет в обоих планах, называй упущенными альтернативами, а не потерей.
 - Про кризисы, риски, «выдержит ли план» — stress_test_plan; для плана, устойчивого ко всем событиям, — find_robust_plan.
 - Если запрос невыполним по правилам — объясни, какое правило мешает.`;
 }
@@ -243,7 +243,8 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
   while (recent.length && recent[0].role !== "user") recent.shift(); // Anthropic требует первым сообщением user
   const provider = pickProvider(systemPrompt(current, eventId) + langRule, recent)!;
   const steps: AgentStep[] = [];
-  const toolOutputs: unknown[] = [history.filter((m) => m.role === "user").map((m) => m.content), current.length ? simulateTool(current, eventId) : null];
+  // Пользовательский текст не является подтверждённым расчётом, даже если агент его повторил.
+  const toolOutputs: unknown[] = [current.length ? simulateTool(current, eventId) : null];
   let proposal: AgentReply["proposal"];
   // Лучший план, найденный инструментами, — страховка, если модель забыла вызвать propose_plan.
   let lastFound: Decision[] | null = null;
@@ -276,14 +277,19 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
           } else if (call.name === "find_best_plans") {
             if (args.objective && args.objective !== "score" && !districtIds.includes(args.objective))
               throw new Error(`objective должен быть "score" или id района: ${districtIds.join(", ")}`);
+            if (args.max_cost !== undefined && (typeof args.max_cost !== "number" || !Number.isFinite(args.max_cost) || args.max_cost < 0))
+              throw new Error("max_cost должен быть неотрицательным числом");
+            const effectiveMaxCost = args.max_cost === undefined ? undefined : Math.min(args.max_cost, budgetFor(eventId));
             const c: PlanConstraints = {
               mustInclude: toDecisions(args.must_include),
               exclude: args.exclude,
               excludeDistricts: args.exclude_districts,
-              maxCost: args.max_cost,
+              maxCost: effectiveMaxCost,
               objective: args.objective,
             };
             const plans = optimize(Math.min(args.top ?? 3, 5), eventId, c);
+            // Подтверждаем только лимит, реально переданный перебору, а не произвольные числа из запроса пользователя.
+            if (effectiveMaxCost !== undefined) toolOutputs.push({ лимит_стоимости_для_поиска: effectiveMaxCost });
             if (plans[0]) lastFound = plans[0].decisions;
             output = plans.length
               ? plans.map((p) => ({ план: planText(p.decisions), score: p.score, стоимость: p.cost, ...(c.objective && c.objective !== "score" ? { [`балл_${districtName(c.objective)}`]: p.objectiveValue } : {}) }))
