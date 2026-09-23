@@ -285,3 +285,31 @@ export function optimize(top = 5): RankedPlan[] {
   optimumCache = best.map((p) => ({ ...p, score: round(p.score) }));
   return optimumCache.slice(0, top);
 }
+
+export interface SwapSuggestion {
+  remove: Decision;
+  add: Decision;
+  newScore: number;
+  gain: number;
+}
+
+/** Лучшая замена одной меры на другую (с учётом всех правил) — практичная подсказка «что поменять». */
+export function bestSwap(decisions: Decision[]): SwapSuggestion | null {
+  const current = scoreOnly(decisions);
+  let best: SwapSuggestion | null = null;
+  decisions.forEach((out, i) => {
+    for (const m of MEASURES) {
+      if (decisions.some((d) => d.measureId === m.id && d !== out)) continue;
+      for (const districtId of m.scope === "city" ? [null] : DISTRICTS.map((d) => d.id)) {
+        const add = { measureId: m.id, districtId };
+        if (add.measureId === out.measureId && add.districtId === (out.districtId ?? null)) continue;
+        const next = decisions.map((d, j) => (j === i ? add : d));
+        if (!validate(next).ok) continue;
+        const s = scoreOnly(next);
+        if (s - current > 0.005 && (!best || s > best.newScore))
+          best = { remove: out, add, newScore: round(s), gain: round(s - current) };
+      }
+    }
+  });
+  return best;
+}
