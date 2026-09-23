@@ -152,7 +152,7 @@ export default function Simulator() {
             формуле ТЗ, AI объясняет результат и компромиссы.
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Stat label="Quality of Life Score" value={result.score.toFixed(2)} sub={`${fmt(result.delta)} к базе ${result.baseScore}`} accent />
           <Stat label="Бюджет" value={`${result.cost} / ${result.budget}`} sub={`остаток ${result.remainingBudget}`} />
           <Stat label="Решений" value={`${decisions.length} / ${RULES.decisions}`} sub={complete ? "набор валиден" : "выберите все 5"} />
@@ -202,9 +202,9 @@ export default function Simulator() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         {/* Каталог мер */}
-        <section>
+        <section className="min-w-0">
           <h2 className="mb-3 text-lg font-semibold">Каталог мероприятий</h2>
           <div className="space-y-5">
             {DIRECTIONS.map((dir) => (
@@ -296,7 +296,7 @@ export default function Simulator() {
         </section>
 
         {/* Результаты */}
-        <section className="space-y-6">
+        <section className="min-w-0 space-y-6">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-semibold">Ваш сценарий</h2>
