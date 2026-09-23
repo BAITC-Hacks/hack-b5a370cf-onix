@@ -60,11 +60,11 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* Мобильная нижняя навигация */}
       <nav className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-page/95 backdrop-blur lg:hidden" aria-label="Навигация">
         <ul className="mx-auto grid max-w-lg grid-cols-6">
-          {links.map(([href, label]) => (
+          {links.map(([href], i) => (
             <li key={href}>
               <Link href={href} className={`flex flex-col items-center gap-0.5 py-2 text-[10px] ${isActive(href) ? "text-accent-strong" : "text-ink-3"}`}>
                 <span className={`grid size-7 place-items-center rounded-lg text-base ${isActive(href) ? "bg-accent-soft" : ""}`}>{ICONS[href]}</span>
-                <span className="truncate">{label}</span>
+                <span className="truncate">{tr.navShort[i]}</span>
               </Link>
             </li>
           ))}

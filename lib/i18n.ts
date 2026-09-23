@@ -150,6 +150,7 @@ const ui = {
     aiRole4: "Без ключа LLM работает шаблонный аналитик — продукт не ломается.",
     footer: "Команда Onix · HackAlem AI 2026 · Спец-трек Astana Innovations · данные синтетические, из ТЗ",
     steps: ["План", "Результаты", "Советник", "Рейтинг"],
+    navShort: ["Главная", "План", "Итоги", "Советник", "Рейтинг", "Формула"],
     stepWord: "Шаг",
     planTitle: "Соберите план",
     planSub: "Ровно 5 мер в бюджет {b}",
@@ -339,6 +340,7 @@ const ui = {
     aiRole4: "LLM кілтінсіз үлгілік талдаушы жұмыс істейді — өнім бұзылмайды.",
     footer: "Onix командасы · HackAlem AI 2026 · Astana Innovations арнайы трегі · деректер синтетикалық, ТТ-дан",
     steps: ["Жоспар", "Нәтижелер", "Кеңесші", "Рейтинг"],
+    navShort: ["Басты", "Жоспар", "Нәтиже", "Кеңесші", "Рейтинг", "Формула"],
     stepWord: "Қадам",
     planTitle: "Жоспар құрыңыз",
     planSub: "{b} бюджетке дәл 5 шара",
@@ -386,7 +388,7 @@ const ui = {
   },
 } as const;
 
-export type UIKey = Exclude<keyof (typeof ui)["ru"], "suggestions" | "steps">;
+export type UIKey = Exclude<keyof (typeof ui)["ru"], "suggestions" | "steps" | "navShort">;
 
 const districtKz: Record<string, { name: string; profile: string }> = {
   esil: { name: "Есіл", profile: "Бай, бірақ көпірлерде кептеліс және мектептер толып кеткен." },
@@ -511,7 +513,7 @@ export function makeT(lang: Lang) {
     }
   };
 
-  return { t, lang, suggestions: dict.suggestions, steps: dict.steps, district, districtByName, profile, indicator, direction, measure, event, issue };
+  return { t, lang, suggestions: dict.suggestions, steps: dict.steps, navShort: dict.navShort, district, districtByName, profile, indicator, direction, measure, event, issue };
 }
 
 export type Translator = ReturnType<typeof makeT>;
