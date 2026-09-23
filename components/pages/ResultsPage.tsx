@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useApp } from "../AppState";
 import { ContributionChart, DistrictDumbbell } from "../charts";
+import { CityMap3D } from "../CityMap3D";
 import { ExplanationView } from "../ExplanationView";
 import { Heatmap } from "../Heatmap";
 import { Button, Card, CardTitle, StatusBadge } from "../ui";
@@ -26,6 +27,13 @@ export default function ResultsPage() {
   return (
     <div className="space-y-6">
       <EventBar />
+
+      <Card>
+        <CardTitle hint={tr.lang === "kz" ? "Аудандар шараларыңызбен бірге «өседі». Тінтуірді апарсаңыз — толық көрсеткіштер." : "Районы «вырастают» вместе с вашими мерами. Наведите на район — все показатели."}>
+          {tr.lang === "kz" ? "Астана 3D" : "Астана в 3D"}
+        </CardTitle>
+        <CityMap3D districts={result.districts} weakest={result.weakestDistrict} />
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

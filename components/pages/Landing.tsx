@@ -4,6 +4,7 @@ import Link from "next/link";
 import { INDICATOR_INFO, RULES } from "@/lib/data";
 import type { Decision } from "@/lib/engine";
 import { useApp } from "../AppState";
+import { CityMap3D } from "../CityMap3D";
 import { StatusBadge } from "../ui";
 
 export const TZ_EXAMPLE: Decision[] = [
@@ -87,6 +88,16 @@ export default function Landing() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-card p-5">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-2xl font-bold">{tr.lang === "kz" ? "Астана 3D — сіздің жоспарыңызбен" : "Астана в 3D — с вашим планом"}</h2>
+          <Link href="/plan" className="text-sm font-medium text-accent-strong hover:underline">
+            {tr.t("ctaPlan")} →
+          </Link>
+        </div>
+        <CityMap3D districts={result.districts} weakest={result.weakestDistrict} />
       </section>
 
       <section>
