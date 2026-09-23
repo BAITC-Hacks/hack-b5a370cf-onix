@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { INDICATORS, RULES, type Indicator } from "@/lib/data";
 import type { DistrictResult } from "@/lib/engine";
 import { useApp } from "./AppState";
-import { projectIsOpen, type MapProject } from "./map-project";
 
 /**
  * Схематичная изометрическая 3D-карта Астаны: пять районов в их реальном взаимном расположении
@@ -61,14 +60,6 @@ const RIVER: Pt[] = [
   [-0.6, 5.1],
 ];
 
-// Условный участок внутри схемы Нуры. Геометрия не описывает реальный земельный участок.
-const PROJECT_SITE: Pt[] = [
-  [2.4, 6.1],
-  [3.1, 6.1],
-  [3.1, 6.65],
-  [2.4, 6.65],
-];
-
 const S = 30; // масштаб
 const COS = Math.cos(Math.PI / 6);
 const SIN = Math.sin(Math.PI / 6);
@@ -111,11 +102,10 @@ function fill(v: number) {
   return ["var(--seq-4)", "var(--seq-5)"];
 }
 
-export function CityMap3D({ districts, weakest, project, quarter = RULES.horizon }: { districts: DistrictResult[]; weakest: string; project?: MapProject | null; quarter?: number }) {
+export function CityMap3D({ districts, weakest }: { districts: DistrictResult[]; weakest: string }) {
   const { tr } = useApp();
   const [metric, setMetric] = useState<"D" | Indicator>("D");
   const [hover, setHover] = useState<string | null>(null);
-  const [projectInfo, setProjectInfo] = useState(false);
 
   const valueOf = (d: DistrictResult, when: "before" | "after") => (metric === "D" ? (when === "before" ? d.scoreBefore : d.scoreAfter) : d[when][metric]);
   const animated = useAnimated(Object.fromEntries(districts.map((d) => [d.id, valueOf(d, "after")])));
@@ -129,13 +119,6 @@ export function CityMap3D({ districts, weakest, project, quarter = RULES.horizon
 
   const hovered = districts.find((d) => d.id === hover);
   const metricLabel = metric === "D" ? tr.t("districtsTitle") : `${metric} · ${tr.indicator(metric)}`;
-  const projectOpen = project ? projectIsOpen(project, quarter) : false;
-  const projectName = project ? tr.t(project.kind === "site" ? "projectSite" : project.kind === "park" ? "projectPark" : "projectSchool") : "";
-  const projectState = tr.t(project?.kind === "site" ? "projectAwaitingChoice" : projectOpen ? "projectOpen" : "projectBuilding");
-  const siteStroke = project?.kind === "site" ? "#2a78d6" : !projectOpen ? "#925b10" : project?.kind === "park" ? "#126441" : "#a75432";
-  const nura = districts.find((district) => district.id === "nura");
-  const nuraHeight = nura ? heightOf(animated.nura ?? valueOf(nura, "after")) : 0;
-  const [siteX, siteY] = iso(centroid(PROJECT_SITE), nuraHeight + 2);
 
   return (
     <div>
@@ -209,52 +192,6 @@ export function CityMap3D({ districts, weakest, project, quarter = RULES.horizon
             );
           })}
 
-          {project && nura && (
-            <g
-              role="button"
-              tabIndex={0}
-              aria-label={`${projectName}: ${projectState}`}
-              onClick={() => setProjectInfo((open) => !open)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setProjectInfo((open) => !open);
-                }
-              }}
-              className="cursor-pointer"
-            >
-              <polygon
-                points={pts(PROJECT_SITE.map((point) => iso(point, nuraHeight + 2)))}
-                fill={project.kind === "site" ? "#cfe7ff" : projectOpen ? (project.kind === "park" ? "#31ad72" : "#e7ba70") : "#f1c670"}
-                stroke={siteStroke}
-                strokeWidth={2}
-                strokeDasharray={projectOpen ? undefined : "4 2"}
-              />
-              {projectOpen && project.kind === "park" && (
-                <g fill="#126441" stroke="#e4ffed" strokeWidth={0.7}>
-                  <circle cx={siteX - 7} cy={siteY - 3} r={4} />
-                  <circle cx={siteX + 2} cy={siteY + 1} r={4} />
-                  <circle cx={siteX + 8} cy={siteY - 2} r={3.5} />
-                </g>
-              )}
-              {projectOpen && project.kind === "school" && (
-                <g>
-                  <rect x={siteX - 8} y={siteY - 9} width={16} height={12} rx={1} fill="#f8f2e6" stroke="#77512f" strokeWidth={1} />
-                  <path d={`M${siteX - 10},${siteY - 9} L${siteX},${siteY - 16} L${siteX + 10},${siteY - 9} Z`} fill="#cb6946" stroke="#77512f" strokeWidth={1} />
-                  <rect x={siteX - 2} y={siteY - 4} width={4} height={7} fill="#77a9d7" />
-                </g>
-              )}
-              {project.kind === "site" && <text x={siteX} y={siteY + 5} textAnchor="middle" fontSize="16" fill="#14549b">◇</text>}
-              {project.kind !== "site" && !projectOpen && <text x={siteX} y={siteY + 5} textAnchor="middle" fontSize="15">🚧</text>}
-              <path d={`M${siteX + 10},${siteY - 5} L${siteX + 23},${siteY - 25}`} fill="none" stroke="var(--ink-2)" strokeWidth={1.5} />
-              <rect x={siteX + 20} y={siteY - 62} width={175} height={40} rx={8} fill="var(--card)" stroke={siteStroke} strokeWidth={1.5} />
-              <text x={siteX + 27} y={siteY - 46} fontSize="11" fontWeight={700} fill="var(--ink)">
-                {project.kind === "site" ? "◇" : project.kind === "park" ? "🌳" : "🏫"} {projectName}
-              </text>
-              <text x={siteX + 27} y={siteY - 31} fontSize="10" fill="var(--ink-2)">{projectState}</text>
-            </g>
-          )}
-
           {/* Подписи отдельным слоем, чтобы их не перекрывали соседние районы */}
           {order.map((d) => {
             const poly = SHAPES[d.id];
@@ -290,15 +227,7 @@ export function CityMap3D({ districts, weakest, project, quarter = RULES.horizon
           })}
         </svg>
 
-        {project && projectInfo && (
-          <div className="absolute bottom-2 left-2 max-w-64 rounded-lg border border-line bg-card px-3 py-2 text-xs shadow-lg">
-            <div className="font-semibold">{projectName}</div>
-            <div className="text-ink-2">{projectState}</div>
-            <div className="mt-1 text-ink-3">{tr.t("projectSiteDisclaimer")}</div>
-          </div>
-        )}
-
-        {hovered && !(project && projectInfo) && (
+        {hovered && (
           <div className="pointer-events-none absolute left-2 top-2 max-w-64 rounded-lg border border-line bg-card px-3 py-2 text-xs shadow-lg">
             <div className="font-semibold">{tr.district(hovered.id)}</div>
             <div className="text-ink-2">
@@ -321,7 +250,6 @@ export function CityMap3D({ districts, weakest, project, quarter = RULES.horizon
         {tr.lang === "kz"
           ? "Схемалық карта: аудандардың өзара орналасуы шынайы, шекаралары шартты. Биіктік — таңдалған көрсеткіш."
           : "Схематичная карта: взаимное расположение районов реальное, границы условные. Высота — выбранный показатель."}
-        {project && ` ${tr.t("projectSiteDisclaimer")}`}
       </p>
     </div>
   );
