@@ -1,5 +1,5 @@
 // Компактная сериализация набора в URL: ?p=M7.nura,M12,M5.saryarka&e=heating — для ссылки на отчёт и «поделиться».
-import type { Decision } from "./engine.ts";
+import { normalizeEventId, sanitizeDecisions, type Decision } from "./engine.ts";
 
 export function encodePlan(decisions: Decision[], eventId?: string | null): string {
   const params = new URLSearchParams();
@@ -10,12 +10,14 @@ export function encodePlan(decisions: Decision[], eventId?: string | null): stri
 
 export function decodePlan(params: URLSearchParams): { decisions: Decision[]; eventId: string | null } {
   const raw = params.get("p") ?? "";
-  const decisions = raw
-    .split(",")
-    .filter(Boolean)
-    .map((part) => {
-      const [measureId, districtId] = part.split(".");
-      return { measureId, districtId: districtId ?? null };
-    });
-  return { decisions, eventId: params.get("e") };
+  const decisions = sanitizeDecisions(
+    raw
+      .split(",")
+      .filter(Boolean)
+      .map((part) => {
+        const [measureId, districtId] = part.split(".");
+        return { measureId, districtId: districtId ?? null };
+      }),
+  );
+  return { decisions, eventId: normalizeEventId(params.get("e")) };
 }

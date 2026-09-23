@@ -1,7 +1,8 @@
 // AI-слой: LLM получает только посчитанные движком факты и объясняет их.
 // Числа LLM не считает. Если ключа нет или API упал — детерминированный шаблон с той же структурой.
 
-import { DIRECTION_LABELS, DISTRICTS, INDICATOR_INFO, RULES, type Direction, type Indicator } from "./data.ts";
+import { DIRECTION_LABELS, DISTRICTS, INDICATOR_INFO, MEASURES, RULES, type Direction, type Indicator } from "./data.ts";
+import { activeProvider, publicError } from "./llm.ts";
 import {
   bestSwap,
   contributions,
@@ -141,7 +142,8 @@ async function callAnthropic(prompt: string, signal: AbortSignal) {
       "x-api-key": process.env.ANTHROPIC_API_KEY!,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model, max_tokens: 1500, temperature: 0.2, system: SYSTEM_PROMPT, messages: [{ role: "user", content: prompt }] }),
+    // Без temperature: Claude Sonnet 5 отвечает 400 на любые не-дефолтные sampling-параметры.
+    body: JSON.stringify({ model, max_tokens: 4000, system: SYSTEM_PROMPT, messages: [{ role: "user", content: prompt }] }),
   });
   if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
@@ -178,16 +180,39 @@ function parseLLM(text: string): Omit<Explanation, "source"> {
   return { summary: o.summary, strengths: list(o.strengths), risks: list(o.risks), tradeoffs: list(o.tradeoffs), recommendations: list(o.recommendations) };
 }
 
-/** Находит в тексте LLM числа, которых нет в фактах (защита от «придуманных» цифр). */
+/** Константы каталога и правил: их числа LLM вправе называть без специальной передачи в фактах. */
+const CATALOG_NUMBERS: number[] = [
+  ...Object.values(RULES),
+  ...MEASURES.flatMap((m) => [m.cost, m.lag, ...Object.values(m.effects)]),
+  ...DISTRICTS.flatMap((d) => [d.population, Math.round(d.population * 100), ...Object.values(d.values)]),
+  ...Object.values(INDICATOR_INFO).flatMap((i) => [i.weight, Math.round(i.weight * 100)]),
+];
+
+/**
+ * Находит в тексте LLM числа, которых нет ни в фактах, ни в каталоге (защита от «придуманных» цифр).
+ * Учитывает доли (0.27 → 27%), годы, идентификаторы мер/показателей и десятичную запятую.
+ */
 export function findUnverifiedNumbersInText(text: string, facts: unknown): string[] {
   const allowed = new Set<string>();
-  for (const n of JSON.stringify(facts).match(/-?\d+(?:\.\d+)?/g) ?? []) allowed.add(String(Math.abs(Number(n))));
+  const add = (n: number) => {
+    allowed.add(String(Math.abs(n)));
+    if (Math.abs(n) < 1) allowed.add(String(Math.round(Math.abs(n) * 100)));
+  };
+  for (const n of JSON.stringify(facts).match(/-?\d+(?:\.\d+)?/g) ?? []) add(Number(n));
+  for (const n of CATALOG_NUMBERS) add(n);
+  const cleaned = text
+    .replace(/\b(?:M|T|E|S|B|C)\d{1,2}\b/g, " ") // id мер и показателей (M13, T1)
+    .replace(/\b(?:19|20)\d{2}\b/g, " "); // годы
   const suspicious = new Set<string>();
-  for (const raw of text.match(/\d+(?:[.,]\d+)?/g) ?? []) {
+  const ok = (raw: string) => {
     const n = Number(raw.replace(",", "."));
-    if (n <= 10) continue; // мелкие порядковые/счётные числа (5 решений, 2 района) не проверяем
-    if (!allowed.has(String(n))) suspicious.add(raw);
-  }
+    if (Number.isInteger(n) && n <= 10) return true; // мелкие счётные числа (5 решений, 2 района)
+    if (allowed.has(String(n))) return true;
+    // «45,62» — перечисление, а не десятичная дробь
+    if (raw.includes(",")) return raw.split(",").every((part) => allowed.has(part) || Number(part) <= 10);
+    return false;
+  };
+  for (const raw of cleaned.match(/\d+(?:[.,]\d+)?/g) ?? []) if (!ok(raw)) suspicious.add(raw);
   return [...suspicious];
 }
 
@@ -201,8 +226,9 @@ export async function explain(decisions: Decision[], eventId: string | null = nu
   const langRule = lang === "kz" ? "\n\nВАЖНО: весь ответ (все значения JSON) напиши на казахском языке (қазақ тілі), названия районов по-казахски: Есіл, Алматы, Сарыарқа, Байқоңыр, Нұра." : "";
   const prompt = `Результаты расчёта сценария:\n${JSON.stringify(facts, null, 1)}${langRule}`;
 
-  const provider = process.env.ANTHROPIC_API_KEY ? "anthropic" : process.env.OPENAI_API_KEY ? "openai" : null;
-  if (!provider) return fallbackExplanation(ctx);
+  const active = activeProvider();
+  if (!active) return fallbackExplanation(ctx);
+  const provider = active.name;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25_000);
@@ -211,7 +237,7 @@ export async function explain(decisions: Decision[], eventId: string | null = nu
     const parsed = parseLLM(text);
     return { ...parsed, source: provider, model, unverifiedNumbers: findUnverifiedNumbers(parsed, facts) };
   } catch (err) {
-    return { ...fallbackExplanation(ctx), error: err instanceof Error ? err.message : String(err) };
+    return { ...fallbackExplanation(ctx), error: publicError(err) };
   } finally {
     clearTimeout(timer);
   }

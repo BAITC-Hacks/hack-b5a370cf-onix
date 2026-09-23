@@ -1,7 +1,7 @@
 // Проверочные сценарии из ТЗ. Запуск: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BASE_SCORE, optimize, optimizeRobust, robustness, simulate, timeline, validate, type Decision } from "./engine.ts";
+import { BASE_SCORE, normalizeEventId, optimize, optimizeRobust, robustness, sanitizeDecisions, simulate, timeline, validate, type Decision } from "./engine.ts";
 
 const example: Decision[] = [
   { measureId: "M7", districtId: "nura" },
@@ -113,4 +113,18 @@ test("стресс-тест и устойчивый оптимум", () => {
   const rr = robustness(robust.decisions);
   assert.equal(rr.failed, 0);
   assert.equal(rr.worst, robust.worst);
+});
+
+test("мусор на входе не роняет расчёт: неизвестные меры/районы, районная мера без района", () => {
+  const junk = sanitizeDecisions([{ measureId: "ZZ" }, { measureId: "M7", districtId: "mars" }, { measureId: "M12", districtId: "nura" }, 5, null, { measureId: "M7", districtId: "nura" }]);
+  assert.deepEqual(junk, [
+    { measureId: "M7", districtId: null },
+    { measureId: "M12", districtId: null },
+  ]);
+  // simulate не должен бросать даже на несанитизированном входе
+  const r = simulate([{ measureId: "ZZ" } as Decision, { measureId: "M7", districtId: null }]);
+  assert.equal(r.score, 52.56, "районная мера без района не даёт эффекта (раньше применялась ко всему городу)");
+  assert.equal(validate([{ measureId: "M7", districtId: null }]).issues.some((i) => i.code === "needDistrict"), true);
+  assert.equal(normalizeEventId("bogus"), null);
+  assert.equal(normalizeEventId("heating"), "heating");
 });

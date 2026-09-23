@@ -1,5 +1,6 @@
 import { BASE_SCORE, optimize } from "@/lib/engine";
 import { EVENTS, MEASURES, DISTRICTS } from "@/lib/data";
+import { activeProvider } from "@/lib/llm";
 
 /** Проверка окружения для экспертов: движок, ключи LLM, доступность подложки карты. */
 export async function GET() {
@@ -10,7 +11,7 @@ export async function GET() {
     ok: true,
     version: process.env.npm_package_version ?? "0.1.0",
     engine: { baseScore: Math.round(BASE_SCORE * 100) / 100, optimum: optimize(1)[0]?.score, measures: MEASURES.length, districts: DISTRICTS.length, events: EVENTS.length },
-    llm: { openai: Boolean(process.env.OPENAI_API_KEY), anthropic: Boolean(process.env.ANTHROPIC_API_KEY), model: process.env.OPENAI_MODEL ?? "gpt-4.1-mini" },
+    llm: { openai: Boolean(process.env.OPENAI_API_KEY), anthropic: Boolean(process.env.ANTHROPIC_API_KEY), active: activeProvider() ?? { name: "fallback", model: "шаблонный аналитик" } },
     map: { tilesOnline: tilesOk, districtsGeojson: "/data/astana-districts.geojson" },
   });
 }

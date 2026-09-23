@@ -4,6 +4,7 @@
 import { DIRECTION_LABELS, DISTRICTS, INDICATOR_INFO, MEASURES, RULES } from "./data.ts";
 import { districtName, getEvent, optimize, optimizeRobust, robustness, simulate, validate, type Decision, type PlanConstraints } from "./engine.ts";
 import { findUnverifiedNumbersInText } from "./explain.ts";
+import { activeProvider, publicError } from "./llm.ts";
 
 export interface AgentMessage {
   role: "user" | "assistant";
@@ -102,6 +103,7 @@ const planText = (ds: Decision[]) => ds.map((d) => `${d.measureId}${d.districtId
 
 function simulateTool(decisions: Decision[], eventId: string | null) {
   const v = validate(decisions, eventId);
+  if (v.issues.some((i) => i.code === "unknown" || i.code === "badDistrict")) return { план: planText(decisions), валиден_как_итоговый: false, нарушения: v.errors };
   const r = simulate(decisions, eventId);
   return {
     план: planText(decisions),
@@ -200,7 +202,8 @@ function anthropicProvider(system: string, history: AgentMessage[]): Provider {
         method: "POST",
         signal,
         headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model, max_tokens: 1500, temperature: 0.2, system, tools, messages }),
+        // Без temperature: Claude Sonnet 5 отвечает 400 на не-дефолтные sampling-параметры.
+        body: JSON.stringify({ model, max_tokens: 2000, system, tools, messages }),
       });
       if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const data = await res.json();
@@ -219,17 +222,12 @@ function anthropicProvider(system: string, history: AgentMessage[]): Provider {
 
 /** Приоритет провайдера: LLM_PROVIDER, иначе Anthropic при наличии ключа, иначе OpenAI. */
 function pickProvider(system: string, history: AgentMessage[]): Provider | null {
-  const pref = process.env.LLM_PROVIDER;
-  const hasA = Boolean(process.env.ANTHROPIC_API_KEY);
-  const hasO = Boolean(process.env.OPENAI_API_KEY);
-  if (pref === "openai" && hasO) return openaiProvider(system, history);
-  if (pref === "anthropic" && hasA) return anthropicProvider(system, history);
-  if (hasA) return anthropicProvider(system, history);
-  if (hasO) return openaiProvider(system, history);
-  return null;
+  const active = activeProvider();
+  if (!active) return null;
+  return active.name === "anthropic" ? anthropicProvider(system, history) : openaiProvider(system, history);
 }
 
-export const agentAvailable = () => Boolean(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY);
+export const agentAvailable = () => activeProvider() !== null;
 
 export async function runAgent(history: AgentMessage[], current: Decision[], eventId: string | null, lang: "ru" | "kz" = "ru"): Promise<AgentReply> {
   if (!agentAvailable()) {
@@ -241,9 +239,11 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
   }
 
   const langRule = lang === "kz" ? "\n\nВАЖНО: отвечай пользователю на казахском языке (қазақ тілі); районы: Есіл, Алматы, Сарыарқа, Байқоңыр, Нұра." : "";
-  const provider = pickProvider(systemPrompt(current, eventId) + langRule, history.slice(-8))!;
+  const recent = history.slice(-8);
+  while (recent.length && recent[0].role !== "user") recent.shift(); // Anthropic требует первым сообщением user
+  const provider = pickProvider(systemPrompt(current, eventId) + langRule, recent)!;
   const steps: AgentStep[] = [];
-  const toolOutputs: unknown[] = [history, current.length ? simulateTool(current, eventId) : null];
+  const toolOutputs: unknown[] = [history.filter((m) => m.role === "user").map((m) => m.content), current.length ? simulateTool(current, eventId) : null];
   let proposal: AgentReply["proposal"];
   // Лучший план, найденный инструментами, — страховка, если модель забыла вызвать propose_plan.
   let lastFound: Decision[] | null = null;
@@ -274,6 +274,8 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
             output = simulateTool(ds, eventId);
             steps.push({ tool: "Симуляция", summary: `${planText(ds) || "пустой план"} → Score ${(output as { score: number }).score}` });
           } else if (call.name === "find_best_plans") {
+            if (args.objective && args.objective !== "score" && !districtIds.includes(args.objective))
+              throw new Error(`objective должен быть "score" или id района: ${districtIds.join(", ")}`);
             const c: PlanConstraints = {
               mustInclude: toDecisions(args.must_include),
               exclude: args.exclude,
@@ -331,9 +333,15 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
       }
       provider.addToolResults(results);
     }
-    return { reply: "Агент не уложился в лимит шагов — уточните запрос.", steps, proposal, model };
+    attachFallback();
+    return {
+      reply: proposal ? `Агент не уложился в лимит шагов, но лучший найденный план готов: ${planText(proposal.decisions)} → Score ${proposal.score}.` : "Агент не уложился в лимит шагов — уточните запрос.",
+      steps,
+      proposal,
+      model,
+    };
   } catch (e) {
-    return { reply: "AI-советник временно недоступен.", steps, proposal, model, error: e instanceof Error ? e.message : String(e) };
+    return { reply: "AI-советник временно недоступен.", steps, proposal, model, error: publicError(e) };
   } finally {
     clearTimeout(timer);
   }

@@ -197,12 +197,14 @@ function districtScore(values: IndicatorValues): number {
 function compute(decisions: Decision[], eventId?: string | null, quarter: number = RULES.horizon) {
   const start = startValues(eventId);
   const raw = new Map<string, IndicatorValues>([...start].map(([id, v]) => [id, { ...v }]));
-  const targets = (d: Decision) => (d.districtId ? [d.districtId] : DISTRICTS.map((x) => x.id));
+  // Целевые районы: городская мера — все районы; районная — только известный выбранный район (иначе эффекта нет).
+  const targets = (m: Measure, d: Decision) => (m.scope === "city" ? DISTRICTS.map((x) => x.id) : d.districtId && districtById.has(d.districtId) ? [d.districtId] : []);
 
   for (const d of decisions) {
-    const m = measureById.get(d.measureId)!;
+    const m = measureById.get(d.measureId);
+    if (!m) continue; // мусор из ссылки/API не должен ронять расчёт — валидатор сообщит о нём отдельно
     const share = shareAt(m, quarter);
-    for (const id of targets(d)) {
+    for (const id of targets(m, d)) {
       const vals = raw.get(id)!;
       for (const [k, e] of Object.entries(m.effects) as [Indicator, number][]) vals[k] += e * share;
     }
@@ -215,7 +217,7 @@ function compute(decisions: Decision[], eventId?: string | null, quarter: number
     if (!first || !second) continue;
     // Синергия появляется, когда обе меры уже заработали.
     if (shareAt(measureById.get(s.first)!, quarter) <= 0 || shareAt(measureById.get(s.second)!, quarter) <= 0) continue;
-    for (const id of targets(first)) raw.get(id)![s.indicator] += s.bonus;
+    for (const id of targets(measureById.get(s.first)!, first)) raw.get(id)![s.indicator] += s.bonus;
     appliedSynergies.push({ pair: `${s.first}+${s.second}`, indicator: s.indicator, bonus: s.bonus, district: districtName(first.districtId) });
   }
 
@@ -280,8 +282,9 @@ export function simulate(decisions: Decision[], eventId?: string | null): Simula
 /** Вклад каждой меры: leave-one-out по Score + прямые приросты показателей. */
 export function contributions(decisions: Decision[], eventId?: string | null): Contribution[] {
   const full = scoreOnly(decisions, eventId);
-  return decisions.map((d) => {
-    const m = measureById.get(d.measureId)!;
+  return decisions.flatMap((d) => {
+    const m = measureById.get(d.measureId);
+    if (!m) return [];
     const share = realizedShare(m);
     const without = scoreOnly(decisions.filter((x) => x !== d), eventId);
     const targets = d.districtId ? [districtName(d.districtId)] : ["весь город"];
@@ -368,11 +371,12 @@ export function forEachPlan(eventId: string | null | undefined, constraints: Pla
  */
 export function optimize(top = 5, eventId?: string | null, constraints: PlanConstraints = {}): ConstrainedPlan[] {
   const constrained = Object.values(constraints).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== "score"));
-  const key = eventId ?? "";
+  const key = getEvent(eventId)?.id ?? "";
   const cached = !constrained && optimumCache.get(key);
   if (cached) return cached.slice(0, top) as ConstrainedPlan[];
 
   const objective = constraints.objective && constraints.objective !== "score" ? constraints.objective : null;
+  if (objective && !districtById.has(objective)) throw new Error(`Неизвестная цель оптимизации: ${objective}`);
   const keep = Math.max(20, top);
   const best: ConstrainedPlan[] = [];
   forEachPlan(eventId, constraints, (acc, cost) => {
@@ -440,7 +444,7 @@ export function timeline(decisions: Decision[], eventId?: string | null): Quarte
         scoreBefore: round(d.scoreBefore),
         scoreAfter: round(d.scoreAfter),
       })),
-      active: decisions.filter((d) => shareAt(measureById.get(d.measureId)!, q) > 0).map((d) => d.measureId),
+      active: decisions.filter((d) => measureById.has(d.measureId) && shareAt(measureById.get(d.measureId)!, q) > 0).map((d) => d.measureId),
     };
   });
 }
@@ -507,10 +511,33 @@ export function optimizeRobust(top = 3): RobustPlan[] {
       }
       if (best.length >= keep && worst <= best[best.length - 1].worst) return;
     }
-    best.push({ decisions: plan, cost, worst: round(worst), worstEvent, base: round(base) });
+    best.push({ decisions: plan, cost, worst, worstEvent, base });
     best.sort((a, b) => b.worst - a.worst || b.base - a.base);
     if (best.length > keep) best.pop();
   });
+  for (const p of best) {
+    p.worst = round(p.worst);
+    p.base = round(p.base);
+  }
   robustCache = best;
   return best.slice(0, top);
 }
+
+/** Приводит произвольный вход (ссылка, localStorage, API) к списку решений с известными мерами и районами. */
+export function sanitizeDecisions(input: unknown, max = RULES.decisions): Decision[] {
+  if (!Array.isArray(input)) return [];
+  const out: Decision[] = [];
+  for (const x of input) {
+    if (!x || typeof x !== "object") continue;
+    const { measureId, districtId } = x as { measureId?: unknown; districtId?: unknown };
+    if (typeof measureId !== "string" || !measureById.has(measureId)) continue;
+    if (out.some((d) => d.measureId === measureId)) continue;
+    const district = measureById.get(measureId)!.scope === "district" && typeof districtId === "string" && districtById.has(districtId) ? districtId : null;
+    out.push({ measureId, districtId: district });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Нормализует id события: неизвестные значения превращаются в null (без события). */
+export const normalizeEventId = (raw: unknown): string | null => (typeof raw === "string" && getEvent(raw) ? raw : null);

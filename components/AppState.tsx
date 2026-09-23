@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { RULES } from "@/lib/data";
-import { contributions, getEvent, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
+import { contributions, getEvent, normalizeEventId, sanitizeDecisions, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
 import type { Explanation } from "@/lib/explain";
 import { makeT, type Lang } from "@/lib/i18n";
 import { decodePlan, encodePlan } from "@/lib/plan-url";
@@ -35,15 +35,15 @@ function useAppStateValue() {
     try {
       const st = JSON.parse(localStorage.getItem(STATE_KEY) ?? "null");
       if (st?.lang === "kz" || st?.lang === "ru") setLangRaw(st.lang);
-      if (Array.isArray(st?.decisions)) setDecisionsRaw(st.decisions);
-      if (getEvent(st?.eventId)) setEventIdRaw(st.eventId);
+      if (Array.isArray(st?.decisions)) setDecisionsRaw(sanitizeDecisions(st.decisions));
+      setEventIdRaw(normalizeEventId(st?.eventId));
       const sv = JSON.parse(localStorage.getItem(SAVED_KEY) ?? "null");
       if (Array.isArray(sv)) setSaved(sv);
     } catch {}
     const fromUrl = decodePlan(new URLSearchParams(location.search));
     if (fromUrl.decisions.length) {
       setDecisionsRaw(fromUrl.decisions);
-      setEventIdRaw(getEvent(fromUrl.eventId) ? fromUrl.eventId : null);
+      setEventIdRaw(fromUrl.eventId);
     }
     const urlLang = new URLSearchParams(location.search).get("lang");
     if (urlLang === "kz" || urlLang === "ru") setLangRaw(urlLang);
