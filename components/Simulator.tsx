@@ -1,82 +1,79 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  DIRECTION_LABELS,
-  DIRECTIONS,
-  DISTRICTS,
-  INDICATOR_INFO,
-  INDICATORS,
-  MEASURES,
-  RULES,
-  SYNERGIES,
-  CONFLICTS,
-  EVENTS,
-  type Measure,
-} from "@/lib/data";
-import { districtName, getEvent, getMeasure, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
+import { useEffect, useState } from "react";
+import { CONFLICTS, DIRECTION_LABELS, DIRECTIONS, DISTRICTS, EVENTS, INDICATOR_INFO, MEASURES, RULES, SYNERGIES, type Measure } from "@/lib/data";
+import { contributions, districtName, getEvent, getMeasure, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
 import type { Explanation } from "@/lib/explain";
+import { decodePlan, encodePlan } from "@/lib/plan-url";
+import { ContributionChart, DistrictDumbbell } from "./charts";
+import { ExplanationView } from "./ExplanationView";
+import { Heatmap } from "./Heatmap";
+import { Button, Card, CardTitle, StatusBadge, ThemeToggle } from "./ui";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
 
-function cellColor(v: number) {
-  if (v < 40) return "bg-red-100 text-red-800";
-  if (v < 50) return "bg-orange-50 text-orange-800";
-  if (v < 60) return "bg-amber-50 text-amber-900";
-  if (v < 70) return "bg-lime-50 text-lime-900";
-  return "bg-emerald-50 text-emerald-900";
-}
+const TZ_EXAMPLE: Decision[] = [
+  { measureId: "M7", districtId: "nura" },
+  { measureId: "M8", districtId: "nura" },
+  { measureId: "M10", districtId: "nura" },
+  { measureId: "M12", districtId: null },
+  { measureId: "M5", districtId: "saryarka" },
+];
 
 interface SavedScenario {
   name: string;
   decisions: Decision[];
+  eventId: string | null;
   score: number;
   cost: number;
 }
 
-const STORAGE_KEY = "akim.scenarios.v1";
+const STORAGE_KEY = "akim.scenarios.v2";
 
 export default function Simulator() {
   const [decisions, setDecisionsRaw] = useState<Decision[]>([]);
-  const [pickDistrict, setPickDistrict] = useState<Record<string, string>>({});
+  const [eventId, setEventIdRaw] = useState<string | null>(null);
   const [explanation, setExplanation] = useState<Explanation | null>(null);
   const [explaining, setExplaining] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
   const [optimum, setOptimum] = useState<RankedPlan[] | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [saved, setSaved] = useState<SavedScenario[]>([]);
-  const [eventId, setEventIdRaw] = useState<string | null>(null);
-  const event = getEvent(eventId);
+  const [copied, setCopied] = useState(false);
 
+  // Состояние из ссылки (?p=...&e=...) и сохранённые сценарии — только после гидратации.
   useEffect(() => {
+    const fromUrl = decodePlan(new URLSearchParams(location.search));
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (fromUrl.decisions.length) setDecisionsRaw(fromUrl.decisions);
+    if (getEvent(fromUrl.eventId)) setEventIdRaw(fromUrl.eventId);
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      // Чтение localStorage возможно только после гидратации.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw) setSaved(JSON.parse(raw));
     } catch {}
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
-  // Любое изменение набора сбрасывает устаревший AI-анализ.
+  const event = getEvent(eventId);
+  const result = simulate(decisions, eventId);
+  const validation = validate(decisions, eventId);
+  const contrib = contributions(decisions, eventId);
+  const complete = decisions.length === RULES.decisions && validation.ok;
+  const planQuery = encodePlan(decisions, eventId);
+
+  const resetDerived = () => {
+    setExplanation(null);
+    setExplainError(null);
+  };
   const setDecisions = (next: Decision[]) => {
     setDecisionsRaw(next);
-    setExplanation(null);
-    setExplainError(null);
+    resetDerived();
   };
-
-  // Событие меняет стартовые условия: сбрасываем устаревший анализ и оптимум.
   const setEventId = (id: string | null) => {
     setEventIdRaw(id);
-    setExplanation(null);
-    setExplainError(null);
     setOptimum(null);
+    resetDerived();
   };
-
-  const randomEvent = () => {
-    const pool = EVENTS.filter((e) => e.id !== eventId);
-    setEventId(pool[Math.floor(Math.random() * pool.length)].id);
-  };
-
   const persist = (list: SavedScenario[]) => {
     setSaved(list);
     try {
@@ -84,25 +81,17 @@ export default function Simulator() {
     } catch {}
   };
 
-  const result = useMemo(() => simulate(decisions, eventId), [decisions, eventId]);
-  const validation = useMemo(() => validate(decisions, eventId), [decisions, eventId]);
-  const complete = decisions.length === RULES.decisions && validation.ok;
-
-  /** Причина, по которой меру нельзя добавить (с учётом всех правил, кроме «ровно 5»). */
-  const blockReason = (m: Measure): string | null => {
-    if (decisions.some((d) => d.measureId === m.id)) return "Уже выбрана";
-    if (decisions.length >= RULES.decisions) return `Уже выбрано ${RULES.decisions} решений`;
-    if (m.scope === "district" && !pickDistrict[m.id]) return "Выберите район";
-    const next = [...decisions, { measureId: m.id, districtId: m.scope === "district" ? pickDistrict[m.id] : null }];
-    const errs = validate(next, eventId).errors.filter((e) => !e.startsWith("Нужно ровно"));
+  /** Почему нельзя добавить меру в этот район (все правила, кроме «ровно 5»). */
+  const blockReason = (m: Measure, districtId: string | null): string | null => {
+    if (decisions.some((d) => d.measureId === m.id)) return "Мера уже в плане";
+    if (decisions.length >= RULES.decisions) return `В плане уже ${RULES.decisions} решений`;
+    const errs = validate([...decisions, { measureId: m.id, districtId }], eventId).errors.filter((e) => !e.startsWith("Нужно ровно"));
     return errs[0] ?? null;
   };
 
-  const add = (m: Measure) => {
-    if (blockReason(m)) return;
-    setDecisions([...decisions, { measureId: m.id, districtId: m.scope === "district" ? pickDistrict[m.id] : null }]);
+  const add = (m: Measure, districtId: string | null) => {
+    if (!blockReason(m, districtId)) setDecisions([...decisions, { measureId: m.id, districtId }]);
   };
-
   const remove = (id: string) => setDecisions(decisions.filter((d) => d.measureId !== id));
 
   const runExplain = async () => {
@@ -134,406 +123,566 @@ export default function Simulator() {
     }
   };
 
-  const saveScenario = () => {
-    const name = `Сценарий ${saved.length + 1}${event ? ` · ${event.title}` : ""}`;
-    persist([...saved, { name, decisions, score: result.score, cost: result.cost }]);
+  const share = async () => {
+    const url = `${location.origin}/?${planQuery}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      prompt("Ссылка на сценарий", url);
+    }
   };
 
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   const budgetPct = Math.min(100, (result.cost / result.budget) * 100);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-      <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Astana Innovations · HackAlem AI</p>
-          <h1 className="text-3xl font-bold">Аким на 5 часов</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Бюджет {RULES.budget} у.е., ровно {RULES.decisions} решений, горизонт 2 года. Движок считает Astana Quality of Life Score по
-            формуле ТЗ, AI объясняет результат и компромиссы.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Stat label="Quality of Life Score" value={result.score.toFixed(2)} sub={`${fmt(result.delta)} к базе ${result.baseScore}`} accent />
-          <Stat label="Бюджет" value={`${result.cost} / ${result.budget}`} sub={`остаток ${result.remainingBudget}`} />
-          <Stat label="Решений" value={`${decisions.length} / ${RULES.decisions}`} sub={complete ? "набор валиден" : "выберите все 5"} />
+    <div className="min-h-screen">
+      {/* Верхняя панель */}
+      <header className="sticky top-0 z-30 border-b border-line bg-page/85 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-2 font-semibold">
+            <span className="grid size-7 place-items-center rounded-lg bg-accent text-sm text-white">А</span>
+            Аким на 5 часов
+          </div>
+          <nav className="ml-4 hidden gap-1 text-sm text-ink-2 md:flex">
+            {[
+              ["plan", "План"],
+              ["results", "Результаты"],
+              ["ai", "AI-анализ"],
+              ["method", "Как считается"],
+            ].map(([id, label]) => (
+              <button key={id} onClick={() => scrollTo(id)} className="rounded-md px-2.5 py-1 hover:bg-card-2 hover:text-ink">
+                {label}
+              </button>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="hidden text-right sm:block">
+              <div className="text-[11px] text-ink-3">Quality of Life Score</div>
+              <div className="font-bold leading-none">{result.score.toFixed(2)}</div>
+            </div>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 
-      <div className="mb-6 h-2 w-full overflow-hidden rounded-full bg-slate-200" aria-label="Использование бюджета">
-        <div className={`h-full ${result.cost > result.budget ? "bg-red-500" : "bg-sky-600"}`} style={{ width: `${budgetPct}%` }} />
-      </div>
-
-      <div className={`mb-6 rounded-xl border p-4 ${event ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"}`}>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold uppercase tracking-wider text-amber-700">Городское событие</div>
-            {event ? (
-              <>
-                <div className="font-semibold">{event.title}</div>
-                <p className="text-sm text-slate-700">{event.description}</p>
-                <p className="mt-1 text-xs text-slate-600">
-                  {[
-                    ...event.shocks.map((sh) => `${districtName(sh.districtId)}: ${sh.indicator} ${fmt(sh.delta)}`),
-                    ...(event.budgetCut ? [`бюджет −${event.budgetCut}`] : []),
-                  ].join(" · ")}{" "}
-                  · базовый Score {result.baseScoreNoEvent} → {result.baseScore}
-                </p>
-              </>
-            ) : (
-              <p className="text-sm text-slate-600">Проверьте устойчивость плана: случайное событие ухудшит показатели района или урежет бюджет, и план придётся пересобрать.</p>
-            )}
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6">
+        {/* Hero */}
+        <section className="grid items-center gap-8 lg:grid-cols-[1.1fr_1fr]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">Astana Innovations · HackAlem AI</p>
+            <h1 className="mt-3 text-4xl font-bold leading-tight sm:text-5xl">Вы — аким Астаны на&nbsp;5&nbsp;часов</h1>
+            <p className="mt-4 max-w-xl text-lg text-ink-2">
+              Один бюджет в {RULES.budget} у.е., пять решений и пять районов с разными проблемами. Движок честно считает Astana Quality of Life Score, а AI
+              объясняет, что сработало, чем пришлось пожертвовать и как сделать лучше.
+            </p>
+            <ol className="mt-6 grid gap-3 sm:grid-cols-3">
+              {[
+                ["1", "Соберите план", "5 мер из 14, район — в один клик"],
+                ["2", "Проверьте на прочность", "Случайное событие урежет бюджет или ударит по району"],
+                ["3", "Получите разбор", "AI-анализ, оптимум и отчёт в PDF"],
+              ].map(([n, t, d]) => (
+                <li key={n} className="rounded-xl border border-line bg-card p-3">
+                  <div className="text-xs font-semibold text-accent">Шаг {n}</div>
+                  <div className="font-medium">{t}</div>
+                  <div className="text-xs text-ink-2">{d}</div>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <Button variant="primary" onClick={() => scrollTo("plan")} className="px-4 py-2">
+                Собрать свой план
+              </Button>
+              <Button onClick={() => setDecisions(TZ_EXAMPLE)} className="px-4 py-2">
+                Загрузить пример из ТЗ
+              </Button>
+            </div>
           </div>
-          <select
-            value={eventId ?? ""}
-            onChange={(e) => setEventId(e.target.value || null)}
-            className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-            aria-label="Выбор события"
-          >
-            <option value="">Без события</option>
-            {EVENTS.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.title}
-              </option>
-            ))}
-          </select>
-          <button onClick={randomEvent} className="rounded bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600">
-            Случайное событие
-          </button>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        {/* Каталог мер */}
-        <section className="min-w-0">
-          <h2 className="mb-3 text-lg font-semibold">Каталог мероприятий</h2>
-          <div className="space-y-5">
-            {DIRECTIONS.map((dir) => (
-              <div key={dir}>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  {DIRECTION_LABELS[dir]} · выбрано {decisions.filter((d) => getMeasure(d.measureId)?.direction === dir).length}/{RULES.maxPerDirection}
-                </h3>
-                <div className="space-y-2">
-                  {MEASURES.filter((m) => m.direction === dir).map((m) => {
-                    const chosen = decisions.find((d) => d.measureId === m.id);
-                    const reason = blockReason(m);
-                    return (
-                      <div key={m.id} className={`rounded-lg border bg-white p-3 ${chosen ? "border-sky-500 ring-1 ring-sky-500" : "border-slate-200"}`}>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium">
-                              <span className="mr-1 text-slate-400">{m.id}</span>
-                              {m.name}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              {m.scope === "city" ? "Весь город" : "Один район"} · лаг {m.lag} кв. (срабатывает {Math.round(((RULES.horizon - m.lag) / RULES.horizon) * 100)}%) ·{" "}
-                              {Object.entries(m.effects)
-                                .map(([k, e]) => `${k} ${fmt(e as number)}`)
-                                .join(", ")}
-                            </div>
-                          </div>
-                          <div className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-sm font-semibold">{m.cost}</div>
-                        </div>
-                        <div className="mt-2 flex items-center gap-2">
-                          {chosen ? (
-                            <>
-                              <span className="text-xs text-sky-700">Выбрано: {districtName(chosen.districtId)}</span>
-                              <button onClick={() => remove(m.id)} className="ml-auto rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">
-                                Убрать
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              {m.scope === "district" && (
-                                <select
-                                  value={pickDistrict[m.id] ?? ""}
-                                  onChange={(e) => setPickDistrict({ ...pickDistrict, [m.id]: e.target.value })}
-                                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
-                                  aria-label={`Район для ${m.id}`}
-                                >
-                                  <option value="">Район…</option>
-                                  {DISTRICTS.map((d) => (
-                                    <option key={d.id} value={d.id}>
-                                      {d.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                              <span className="truncate text-xs text-slate-400">{reason && reason !== "Выберите район" ? reason : ""}</span>
-                              <button
-                                onClick={() => add(m)}
-                                disabled={!!reason}
-                                title={reason ?? ""}
-                                className="ml-auto rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white enabled:hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                              >
-                                Добавить
-                              </button>
-                            </>
-                          )}
-                        </div>
+          {/* Обзор города */}
+          <div className="rounded-2xl border border-line bg-card p-5">
+            <div className="mb-3 flex items-baseline justify-between">
+              <h2 className="font-semibold">Город сегодня</h2>
+              <span className="text-xs text-ink-3">балл района 0–100, без мер</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {result.districts.map((d) => {
+                const profile = DISTRICTS.find((x) => x.id === d.id)!.profile;
+                const weakest = d.scoreBefore === Math.min(...result.districts.map((x) => x.scoreBefore));
+                const crit = INDICATOR_KEYS.filter((k) => d.before[k] < RULES.criticalThreshold).length;
+                return (
+                  <div key={d.id} className={`rounded-xl p-3 ${weakest ? "bg-warn-soft" : "bg-card-2"}`}>
+                    <div className="flex items-baseline justify-between">
+                      <span className="font-medium">{d.name}</span>
+                      <span className="text-[11px] text-ink-3">{Math.round(d.population * 100)}%</span>
+                    </div>
+                    <div className="mt-1 text-2xl font-bold">{d.scoreBefore.toFixed(1)}</div>
+                    <p className="mt-1 text-[11px] leading-snug text-ink-2">{profile}</p>
+                    {crit > 0 && (
+                      <div className="mt-1.5">
+                        <StatusBadge kind="crit">{crit} ниже 40</StatusBadge>
                       </div>
-                    );
-                  })}
+                    )}
+                  </div>
+                );
+              })}
+              <div className="rounded-xl border border-dashed border-line p-3">
+                <div className="text-[11px] text-ink-3">Стартовый Score</div>
+                <div className="text-2xl font-bold">{result.baseScore.toFixed(2)}</div>
+                <p className="mt-1 text-[11px] leading-snug text-ink-2">0.7 × средний по городу + 0.3 × слабейший район − штрафы</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Событие */}
+        <section className={`rounded-2xl border p-5 ${event ? "border-warn bg-warn-soft" : "border-line bg-card"}`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold uppercase tracking-wider text-ink-2">Городское событие · стресс-тест плана</div>
+              {event ? (
+                <>
+                  <div className="mt-1 text-lg font-semibold">⚠ {event.title}</div>
+                  <p className="text-sm text-ink-2">{event.description}</p>
+                  <p className="mt-1 text-xs text-ink-2">
+                    {[...event.shocks.map((s) => `${districtName(s.districtId)}: ${INDICATOR_INFO[s.indicator].name} ${fmt(s.delta)}`), ...(event.budgetCut ? [`бюджет −${event.budgetCut}`] : [])].join(" · ")} · стартовый
+                    Score {result.baseScoreNoEvent} → {result.baseScore}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-ink-2">Настоящий аким не планирует в вакууме. Включите событие — и посмотрите, выдержит ли ваш план аварию, смог или урезанный бюджет.</p>
+              )}
+            </div>
+            <select
+              value={eventId ?? ""}
+              onChange={(e) => setEventId(e.target.value || null)}
+              className="rounded-lg border border-line bg-card px-2 py-1.5 text-sm"
+              aria-label="Выбор события"
+            >
+              <option value="">Без события</option>
+              {EVENTS.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.title}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="warn"
+              onClick={() => {
+                const pool = EVENTS.filter((e) => e.id !== eventId);
+                setEventId(pool[Math.floor(Math.random() * pool.length)].id);
+              }}
+            >
+              🎲 Случайное событие
+            </Button>
+          </div>
+        </section>
+
+        {/* План: каталог + панель */}
+        <div id="plan" className="grid scroll-mt-20 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+          <section className="min-w-0">
+            <div className="mb-4">
+              <h2 className="text-2xl font-bold">Каталог мероприятий</h2>
+              <p className="text-sm text-ink-2">
+                Нажмите на район, чтобы добавить меру. Недоступные варианты объясняют причину при наведении. Эффект масштабируется лагом: за 2 года мера с лагом L
+                срабатывает на (8 − L)/8.
+              </p>
+            </div>
+            <div className="space-y-6">
+              {DIRECTIONS.map((dir) => {
+                const used = decisions.filter((d) => getMeasure(d.measureId)?.direction === dir).length;
+                return (
+                  <div key={dir}>
+                    <div className="mb-2 flex items-center gap-2">
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-2">{DIRECTION_LABELS[dir]}</h3>
+                      <span className={`text-xs ${used >= RULES.maxPerDirection ? "text-ink" : "text-ink-3"}`}>
+                        {used}/{RULES.maxPerDirection}
+                      </span>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {MEASURES.filter((m) => m.direction === dir).map((m) => (
+                        <MeasureCard key={m.id} m={m} chosen={decisions.find((d) => d.measureId === m.id)} blockReason={blockReason} onAdd={add} onRemove={remove} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Панель плана */}
+          <aside className="min-w-0">
+            <div className="space-y-4 lg:sticky lg:top-20">
+              <div className="rounded-2xl bg-accent p-5 text-white">
+                <div className="text-sm opacity-85">Astana Quality of Life Score</div>
+                <div className="mt-1 flex items-end gap-3">
+                  <span className="text-5xl font-bold leading-none">{result.score.toFixed(2)}</span>
+                  <span className="pb-1 text-sm font-medium">
+                    {fmt(result.delta)} к старту {result.baseScore}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <div className="opacity-80">Средний по городу</div>
+                    <div className="text-base font-semibold">{result.dAvg}</div>
+                  </div>
+                  <div>
+                    <div className="opacity-80">Слабейший · {result.weakestDistrict}</div>
+                    <div className="text-base font-semibold">{result.minD}</div>
+                  </div>
+                  <div>
+                    <div className="opacity-80">Ниже 40</div>
+                    <div className="text-base font-semibold">{result.criticalCount}</div>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
-            <div className="font-semibold text-slate-700">Правила</div>
-            <ul className="mt-1 list-disc space-y-0.5 pl-4">
-              <li>Ровно {RULES.decisions} мер, без повторов, не более {RULES.maxPerDirection} из одного направления, бюджет ≤ {result.budget}.</li>
+
+              <div className="rounded-2xl border border-line bg-card p-4">
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="font-semibold">Бюджет</span>
+                  <span>
+                    <b>{result.cost}</b> / {result.budget} · остаток {result.remainingBudget}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-card-2" role="progressbar" aria-valuenow={result.cost} aria-valuemax={result.budget}>
+                  <div className={`h-full rounded-full ${result.cost > result.budget ? "bg-crit" : "bg-accent"}`} style={{ width: `${budgetPct}%` }} />
+                </div>
+
+                <div className="mt-4 text-sm font-semibold">
+                  Решения {decisions.length}/{RULES.decisions}
+                </div>
+                <ol className="mt-2 space-y-1.5">
+                  {Array.from({ length: RULES.decisions }).map((_, i) => {
+                    const d = decisions[i];
+                    const m = d && getMeasure(d.measureId);
+                    return m ? (
+                      <li key={d.measureId} className="flex items-center gap-2 rounded-lg bg-card-2 px-2.5 py-1.5 text-sm">
+                        <span className="w-8 text-xs font-semibold text-ink-3">{m.id}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{m.name}</span>
+                          <span className="text-xs text-accent-strong">{districtName(d.districtId)}</span>
+                        </span>
+                        <span className="text-xs text-ink-2">{m.cost}</span>
+                        <button onClick={() => remove(m.id)} className="rounded px-1 text-ink-3 hover:bg-card hover:text-ink" aria-label={`Убрать ${m.id}`}>
+                          ✕
+                        </button>
+                      </li>
+                    ) : (
+                      <li key={`slot-${i}`} className="rounded-lg border border-dashed border-line px-2.5 py-2 text-xs text-ink-3">
+                        Слот {i + 1} — выберите меру в каталоге
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                <div className="mt-3 space-y-1">
+                  {complete ? (
+                    <StatusBadge kind="good">План валиден</StatusBadge>
+                  ) : decisions.length > 0 ? (
+                    <ul className="space-y-1">
+                      {validation.errors.map((e) => (
+                        <li key={e}>
+                          <StatusBadge kind={e.startsWith("Нужно ровно") ? "info" : "crit"}>{e}</StatusBadge>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {result.synergies.map((s) => (
+                    <div key={s.pair}>
+                      <StatusBadge kind="good">
+                        Синергия {s.pair}: {s.indicator} +{s.bonus}
+                      </StatusBadge>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Button
+                    variant="primary"
+                    disabled={!complete || explaining}
+                    onClick={() => {
+                      runExplain();
+                      scrollTo("ai");
+                    }}
+                    className="col-span-2"
+                  >
+                    {explaining ? "AI анализирует…" : "✦ AI-анализ плана"}
+                  </Button>
+                  <a
+                    href={complete ? `/report?${planQuery}` : undefined}
+                    target="_blank"
+                    rel="noopener"
+                    aria-disabled={!complete}
+                    className={`inline-flex items-center justify-center rounded-lg border border-line px-3 py-1.5 text-sm font-medium ${complete ? "hover:bg-card-2" : "pointer-events-none opacity-40"}`}
+                  >
+                    Отчёт / PDF
+                  </a>
+                  <Button onClick={share} disabled={!decisions.length}>
+                    {copied ? "Скопировано ✓" : "Поделиться"}
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      persist([
+                        ...saved,
+                        { name: `Сценарий ${saved.length + 1}${event ? ` · ${event.title}` : ""}`, decisions, eventId, score: result.score, cost: result.cost },
+                      ])
+                    }
+                    disabled={!complete}
+                  >
+                    В сравнение
+                  </Button>
+                  <Button variant="ghost" onClick={() => setDecisions([])} disabled={!decisions.length}>
+                    Сбросить
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        {/* Результаты */}
+        <div id="results" className="grid scroll-mt-20 gap-6 lg:grid-cols-2">
+          <Card>
+            <CardTitle hint="Балл района — взвешенная сумма 10 показателей. Слабейший район весит 30% итогового Score.">Районы: до и после</CardTitle>
+            <DistrictDumbbell districts={result.districts} weakest={result.weakestDistrict} />
+          </Card>
+          <Card>
+            <CardTitle hint="Какая мера сколько даёт итоговому Score — видно, где бюджет работает, а где нет.">Вклад мер в Score</CardTitle>
+            {contrib.length ? <ContributionChart items={contrib} /> : <p className="text-sm text-ink-3">Добавьте меры, чтобы увидеть их вклад.</p>}
+          </Card>
+        </div>
+
+        <Card>
+          <CardTitle hint="Цвет — уровень показателя, под значением — изменение от ваших мер.">Все показатели по районам</CardTitle>
+          <Heatmap districts={result.districts} />
+        </Card>
+
+        <Card id="ai" className="scroll-mt-20">
+          <CardTitle
+            hint="Числа считает движок. LLM получает только готовые факты и объясняет их; каждое число в ответе сверяется с расчётом."
+            action={
+              <Button variant="primary" onClick={runExplain} disabled={!complete || explaining}>
+                {explaining ? "Анализирую…" : explanation ? "Обновить анализ" : "Проанализировать"}
+              </Button>
+            }
+          >
+            AI-анализ сценария
+          </CardTitle>
+          {!complete && !explanation && <p className="text-sm text-ink-3">Соберите валидный план из {RULES.decisions} мер.</p>}
+          {explaining && !explanation && <div className="h-24 animate-pulse rounded-xl bg-card-2" />}
+          {explainError && <StatusBadge kind="crit">{explainError}</StatusBadge>}
+          {explanation && <ExplanationView e={explanation} />}
+        </Card>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardTitle
+              hint="Движок перебирает все ~700 тыс. допустимых планов по правилам ТЗ (с учётом события)."
+              action={
+                <Button onClick={runOptimize} disabled={optimizing}>
+                  {optimizing ? "Перебираю…" : optimum ? "Обновить" : "Найти оптимум"}
+                </Button>
+              }
+            >
+              Лучшие планы
+            </CardTitle>
+            {optimum ? (
+              <ol className="space-y-2">
+                {optimum.map((p, i) => (
+                  <li key={i} className="rounded-xl bg-card-2 p-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">#{i + 1}</span>
+                      <span className="font-bold text-accent-strong">{p.score.toFixed(2)}</span>
+                      <span className="text-xs text-ink-3">стоимость {p.cost}</span>
+                      {i === 0 && complete && (
+                        <span className="text-xs text-ink-2">{result.score >= p.score - 0.005 ? "ваш план оптимален" : `ваш план −${(p.score - result.score).toFixed(2)}`}</span>
+                      )}
+                      <Button onClick={() => setDecisions(p.decisions)} className="ml-auto px-2 py-0.5 text-xs">
+                        Применить
+                      </Button>
+                    </div>
+                    <div className="mt-1 text-xs text-ink-2">{p.decisions.map((d) => `${d.measureId} ${districtName(d.districtId)}`).join(" · ")}</div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-ink-3">Ориентир для сравнения: насколько ваш план далёк от лучшего возможного.</p>
+            )}
+          </Card>
+
+          <Card>
+            <CardTitle hint="Сохраняйте варианты и сравнивайте — например, планы разных команд или план до и после события.">Сравнение сценариев</CardTitle>
+            {saved.length ? (
+              <>
+                <table className="w-full text-sm">
+                  <thead className="text-left text-xs text-ink-3">
+                    <tr>
+                      <th className="py-1 font-medium">Сценарий</th>
+                      <th className="text-right font-medium">Бюджет</th>
+                      <th className="text-right font-medium">Score</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...saved]
+                      .sort((a, b) => b.score - a.score)
+                      .map((s, i) => (
+                        <tr key={s.name} className="border-t border-line">
+                          <td className="py-1.5">
+                            <div className="font-medium">
+                              {i === 0 && "🏆 "}
+                              {s.name}
+                            </div>
+                            <div className="text-xs text-ink-3">{s.decisions.map((d) => d.measureId).join(", ")}</div>
+                          </td>
+                          <td className="text-right">{s.cost}</td>
+                          <td className="text-right font-semibold">{s.score.toFixed(2)}</td>
+                          <td className="text-right">
+                            <button
+                              onClick={() => {
+                                setEventId(s.eventId);
+                                setDecisions(s.decisions);
+                              }}
+                              className="text-xs text-accent-strong underline"
+                            >
+                              Открыть
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+                <button onClick={() => persist([])} className="mt-3 text-xs text-ink-3 underline">
+                  Очистить
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-ink-3">Соберите план и нажмите «В сравнение».</p>
+            )}
+          </Card>
+        </div>
+
+        {/* Методика */}
+        <Card id="method" className="scroll-mt-20">
+          <CardTitle hint="Всё детерминировано и воспроизводимо: одинаковый план всегда даёт одинаковый Score.">Как считается Score</CardTitle>
+          <div className="grid gap-6 text-sm md:grid-cols-2">
+            <ol className="list-decimal space-y-2 pl-5">
+              <li>
+                Показатель после мер: <code className="rounded bg-card-2 px-1">I′ = clip(I + Σ эффект × (8 − лаг)/8 + синергии, 0, 100)</code>
+              </li>
+              <li>Балл района: взвешенная сумма 10 показателей (веса 0.09–0.11, сумма 1).</li>
+              <li>Средний по городу: баллы районов, взвешенные по доле населения.</li>
+              <li>
+                <b>Score = 0.7 × средний по городу + 0.3 × слабейший район − 1 × (число показателей ниже 40)</b>
+              </li>
+            </ol>
+            <ul className="space-y-1 text-ink-2">
+              <li>• Ровно {RULES.decisions} мер, без повторов, бюджет ≤ {result.budget}, не более {RULES.maxPerDirection} из одного направления.</li>
               {CONFLICTS.map((c) => (
                 <li key={c.a + c.b}>
-                  {c.a} и {c.b}: {c.reason}.
+                  • {c.a} и {c.b}: {c.reason}.
                 </li>
               ))}
               {SYNERGIES.map((s) => (
                 <li key={s.first + s.second}>
-                  Синергия {s.first}+{s.second}: {s.indicator} +{s.bonus} в районе {s.first}.
+                  • Синергия {s.first} + {s.second}: {INDICATOR_INFO[s.indicator].name} +{s.bonus} в районе {s.first}.
                 </li>
               ))}
             </ul>
           </div>
-        </section>
+        </Card>
+      </main>
 
-        {/* Результаты */}
-        <section className="min-w-0 space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold">Ваш сценарий</h2>
-              <div className="ml-auto flex gap-2">
-                <button onClick={() => setDecisions([])} disabled={!decisions.length} className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40">
-                  Сбросить
-                </button>
-                <button onClick={saveScenario} disabled={!complete} className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40">
-                  Сохранить для сравнения
-                </button>
-              </div>
-            </div>
-            {decisions.length === 0 ? (
-              <p className="text-sm text-slate-500">Добавьте меры из каталога. Score пересчитывается сразу.</p>
-            ) : (
-              <ol className="space-y-1 text-sm">
-                {decisions.map((d, i) => {
-                  const m = getMeasure(d.measureId)!;
-                  return (
-                    <li key={d.measureId} className="flex gap-2">
-                      <span className="w-5 text-slate-400">{i + 1}.</span>
-                      <span className="flex-1">
-                        <b>{m.id}</b> {m.name} — <span className="text-sky-700">{districtName(d.districtId)}</span>
-                      </span>
-                      <span className="text-slate-500">{m.cost}</span>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-            {decisions.length > 0 && !validation.ok && (
-              <ul className="mt-3 space-y-0.5 text-xs text-amber-700">
-                {validation.errors.map((e) => (
-                  <li key={e}>• {e}</li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-              <Mini label="Средний балл города" value={result.dAvg} />
-              <Mini label={`Слабейший: ${result.weakestDistrict}`} value={result.minD} />
-              <Mini label="Показателей < 40" value={result.criticalCount} warn={result.criticalCount > 0} />
-              <Mini label="Синергий" value={result.synergies.length} />
-            </div>
-          </div>
-
-          {/* Карта районов */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-lg font-semibold">Показатели районов: до → после</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] border-separate border-spacing-0.5 text-center text-xs">
-                <thead>
-                  <tr className="text-slate-500">
-                    <th className="text-left font-medium">Район</th>
-                    {INDICATORS.map((k) => (
-                      <th key={k} className="font-medium" title={INDICATOR_INFO[k].name}>
-                        {k}
-                      </th>
-                    ))}
-                    <th className="font-medium">Балл D</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.districts.map((d) => (
-                    <tr key={d.id}>
-                      <td className="pr-2 text-left">
-                        <div className="font-medium">{d.name}</div>
-                        <div className="text-[10px] text-slate-400">{Math.round(d.population * 100)}% жителей</div>
-                      </td>
-                      {INDICATORS.map((k) => {
-                        const delta = Math.round((d.after[k] - d.before[k]) * 100) / 100;
-                        return (
-                          <td key={k} className={`rounded px-1 py-1 ${cellColor(d.after[k])}`} title={`${INDICATOR_INFO[k].name}: ${d.before[k]} → ${d.after[k]}`}>
-                            <div className="font-semibold">{Math.round(d.after[k] * 10) / 10}</div>
-                            <div className={`text-[10px] ${delta ? (delta > 0 ? "text-emerald-700" : "text-red-700") : "text-transparent"}`}>{delta ? fmt(delta) : "0"}</div>
-                          </td>
-                        );
-                      })}
-                      <td className="px-1">
-                        <div className="font-semibold">{d.scoreAfter}</div>
-                        <div className="text-[10px] text-slate-500">было {d.scoreBefore}</div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-500">
-              {INDICATORS.map((k) => `${k} — ${INDICATOR_INFO[k].name}`).join(" · ")}. Красным — критические значения ниже 40 (штраф −1 к Score за каждое).
-            </p>
-          </div>
-
-          {/* AI-анализ */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <h2 className="text-lg font-semibold">AI-анализ сценария</h2>
-              <button
-                onClick={runExplain}
-                disabled={!complete || explaining}
-                className="ml-auto rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white enabled:hover:bg-sky-700 disabled:bg-slate-300"
-              >
-                {explaining ? "Анализирую…" : "Проанализировать"}
-              </button>
-            </div>
-            {!complete && <p className="text-sm text-slate-500">Соберите валидный набор из {RULES.decisions} мер, чтобы получить анализ.</p>}
-            {explainError && <p className="text-sm text-red-700">{explainError}</p>}
-            {explanation && <ExplanationView e={explanation} />}
-          </div>
-
-          {/* Оптимизатор */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <h2 className="text-lg font-semibold">Лучшие наборы (полный перебор)</h2>
-              <button onClick={runOptimize} disabled={optimizing} className="ml-auto rounded border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40">
-                {optimizing ? "Перебираю ~700 тыс. наборов…" : optimum ? "Обновить" : "Найти оптимум"}
-              </button>
-            </div>
-            {!optimum && <p className="text-sm text-slate-500">Движок перебирает все допустимые наборы по правилам ТЗ и показывает топ-5 — ориентир для сравнения.</p>}
-            {optimum && (
-              <ol className="space-y-2">
-                {optimum.map((p, i) => (
-                  <li key={i} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-2 text-sm">
-                    <span className="font-semibold">#{i + 1}</span>
-                    <span className="rounded bg-emerald-100 px-2 font-semibold text-emerald-800">{p.score.toFixed(2)}</span>
-                    <span className="text-slate-500">стоимость {p.cost}</span>
-                    <span className="basis-full text-xs text-slate-700">
-                      {p.decisions.map((d) => `${d.measureId} (${districtName(d.districtId)})`).join(" · ")}
-                    </span>
-                    <button onClick={() => setDecisions(p.decisions)} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs">
-                      Применить
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-
-          {/* Сравнение */}
-          {saved.length > 0 && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-3 flex items-center">
-                <h2 className="text-lg font-semibold">Сравнение сценариев</h2>
-                <button onClick={() => persist([])} className="ml-auto text-xs text-slate-500 underline">
-                  Очистить
-                </button>
-              </div>
-              <table className="w-full text-sm">
-                <thead className="text-left text-xs text-slate-500">
-                  <tr>
-                    <th>Сценарий</th>
-                    <th>Меры</th>
-                    <th className="text-right">Стоимость</th>
-                    <th className="text-right">Score</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...saved]
-                    .sort((a, b) => b.score - a.score)
-                    .map((s) => (
-                      <tr key={s.name} className="border-t border-slate-100">
-                        <td className="py-1">{s.name}</td>
-                        <td className="text-xs text-slate-600">{s.decisions.map((d) => `${d.measureId}${d.districtId ? `/${districtName(d.districtId)}` : ""}`).join(", ")}</td>
-                        <td className="text-right">{s.cost}</td>
-                        <td className="text-right font-semibold">{s.score.toFixed(2)}</td>
-                        <td className="text-right">
-                          <button onClick={() => setDecisions(s.decisions)} className="text-xs text-sky-700 underline">
-                            Загрузить
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-
-      <footer className="mt-10 text-xs text-slate-400">
-        Score = 0.7 × средний балл города (по населению) + 0.3 × балл слабейшего района − 1 × число показателей ниже 40. Данные синтетические, из ТЗ Astana
-        Innovations.
+      <footer className="border-t border-line py-6 text-center text-xs text-ink-3">
+        Команда Onix · HackAlem AI 2026 · Спец-трек Astana Innovations · данные синтетические, из ТЗ
       </footer>
     </div>
   );
 }
 
-function Stat({ label, value, sub, accent }: { label: string; value: string; sub: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-xl border px-4 py-2 ${accent ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-white"}`}>
-      <div className={`text-[11px] ${accent ? "text-sky-100" : "text-slate-500"}`}>{label}</div>
-      <div className="text-2xl font-bold">{value}</div>
-      <div className={`text-[11px] ${accent ? "text-sky-100" : "text-slate-500"}`}>{sub}</div>
-    </div>
-  );
-}
+const INDICATOR_KEYS = Object.keys(INDICATOR_INFO) as (keyof typeof INDICATOR_INFO)[];
 
-function Mini({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+function MeasureCard({
+  m,
+  chosen,
+  blockReason,
+  onAdd,
+  onRemove,
+}: {
+  m: Measure;
+  chosen?: Decision;
+  blockReason: (m: Measure, districtId: string | null) => string | null;
+  onAdd: (m: Measure, districtId: string | null) => void;
+  onRemove: (id: string) => void;
+}) {
+  const share = Math.round(((RULES.horizon - m.lag) / RULES.horizon) * 100);
+  const cityReason = m.scope === "city" ? blockReason(m, null) : null;
   return (
-    <div className={`rounded-lg p-2 ${warn ? "bg-red-50" : "bg-slate-50"}`}>
-      <div className="text-[11px] text-slate-500">{label}</div>
-      <div className={`text-lg font-semibold ${warn ? "text-red-700" : ""}`}>{value}</div>
-    </div>
-  );
-}
-
-function ExplanationView({ e }: { e: Explanation }) {
-  const sections: [string, string[], string][] = [
-    ["Сильные стороны", e.strengths, "text-emerald-700"],
-    ["Риски и последствия", e.risks, "text-red-700"],
-    ["Компромиссы", e.tradeoffs, "text-amber-700"],
-    ["Рекомендации", e.recommendations, "text-sky-700"],
-  ];
-  return (
-    <div className="space-y-3 text-sm">
-      <div className="flex flex-wrap gap-2 text-[11px]">
-        <span className="rounded bg-slate-100 px-2 py-0.5">
-          {e.source === "fallback" ? "Шаблонный анализ (LLM не подключён)" : `LLM: ${e.source} · ${e.model}`}
-        </span>
-        {e.error && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-800">LLM недоступен, показан шаблон: {e.error.slice(0, 80)}</span>}
-        {e.unverifiedNumbers && e.unverifiedNumbers.length > 0 && (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-red-800">Числа не из расчёта: {e.unverifiedNumbers.join(", ")}</span>
-        )}
-        {e.unverifiedNumbers && e.unverifiedNumbers.length === 0 && <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-800">Все числа сверены с расчётом</span>}
-      </div>
-      <p className="font-medium">{e.summary}</p>
-      {sections.map(([title, items, color]) =>
-        items.length ? (
-          <div key={title}>
-            <div className={`text-xs font-semibold uppercase tracking-wider ${color}`}>{title}</div>
-            <ul className="mt-1 list-disc space-y-1 pl-5">
-              {items.map((it, i) => (
-                <li key={i}>{it}</li>
-              ))}
-            </ul>
+    <div className={`rounded-xl border bg-card p-3 transition ${chosen ? "border-accent ring-1 ring-accent" : "border-line"}`}>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium leading-snug">
+            <span className="mr-1 text-ink-3">{m.id}</span>
+            {m.name}
           </div>
-        ) : null,
-      )}
+          <div className="mt-1 flex flex-wrap gap-1 text-[11px]">
+            {Object.entries(m.effects).map(([k, e]) => (
+              <span
+                key={k}
+                className={`rounded px-1.5 py-0.5 ${(e as number) < 0 ? "bg-crit-soft text-crit" : "bg-card-2 text-ink-2"}`}
+                title={INDICATOR_INFO[k as keyof typeof INDICATOR_INFO].name}
+              >
+                {k} {fmt(e as number)}
+              </span>
+            ))}
+            <span className="rounded px-1.5 py-0.5 text-ink-3">
+              лаг {m.lag} · {share}%
+            </span>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-lg font-bold leading-none">{m.cost}</div>
+          <div className="text-[10px] text-ink-3">у.е.</div>
+        </div>
+      </div>
+      <div className="mt-2.5">
+        {chosen ? (
+          <div className="flex items-center gap-2 text-xs">
+            <StatusBadge kind="good">В плане · {districtName(chosen.districtId)}</StatusBadge>
+            <button onClick={() => onRemove(m.id)} className="ml-auto text-ink-3 underline hover:text-ink">
+              Убрать
+            </button>
+          </div>
+        ) : m.scope === "city" ? (
+          <button
+            onClick={() => onAdd(m, null)}
+            disabled={!!cityReason}
+            title={cityReason ?? "Добавить для всего города"}
+            className="w-full rounded-lg border border-line py-1 text-xs font-medium enabled:hover:border-accent enabled:hover:text-accent-strong disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            + Весь город
+          </button>
+        ) : (
+          <div className="grid grid-cols-5 gap-1">
+            {DISTRICTS.map((d) => {
+              const r = blockReason(m, d.id);
+              return (
+                <button
+                  key={d.id}
+                  onClick={() => onAdd(m, d.id)}
+                  disabled={!!r}
+                  title={r ?? `Добавить: ${d.name}`}
+                  className="truncate rounded-lg border border-line px-1 py-1 text-[11px] font-medium enabled:hover:border-accent enabled:hover:text-accent-strong disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  {d.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

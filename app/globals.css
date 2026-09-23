@@ -1,18 +1,115 @@
 @import "tailwindcss";
 
+/* Дизайн-токены. Светлая и тёмная темы задаются отдельно (не автоматическая инверсия). */
 :root {
-  --background: #f6f7f9;
-  --foreground: #14171c;
+  color-scheme: light;
+  --page: #f4f5f2;
+  --card: #fcfcfb;
+  --card-2: #f0efec;
+  --line: #e2e1dc;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #8a8983;
+  --accent: #2a78d6;
+  --accent-strong: #1c5cab;
+  --accent-soft: #cde2fb;
+  --before: #b3b2ab;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warn: #fab219;
+  --warn-soft: #fff3d6;
+  --crit: #d03b3b;
+  --crit-soft: #fbe3e3;
+  --seq-1: #cde2fb;
+  --seq-2: #9ec5f4;
+  --seq-3: #6da7ec;
+  --seq-4: #3987e5;
+  --seq-5: #256abf;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #111110;
+    --card: #1a1a19;
+    --card-2: #232321;
+    --line: #34342f;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #8f8e86;
+    --accent: #3987e5;
+    --accent-strong: #86b6ef;
+    --accent-soft: #184f95;
+    --before: #5c5b55;
+    --good-ink: #5fd35f;
+    --warn-soft: #3a2f12;
+    --crit-soft: #3d1c1c;
+    --seq-1: #1a2b40;
+    --seq-2: #104281;
+    --seq-3: #1c5cab;
+    --seq-4: #2a78d6;
+    --seq-5: #5598e7;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #111110;
+  --card: #1a1a19;
+  --card-2: #232321;
+  --line: #34342f;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #8f8e86;
+  --accent: #3987e5;
+  --accent-strong: #86b6ef;
+  --accent-soft: #184f95;
+  --before: #5c5b55;
+  --good-ink: #5fd35f;
+  --warn-soft: #3a2f12;
+  --crit-soft: #3d1c1c;
+  --seq-1: #1a2b40;
+  --seq-2: #104281;
+  --seq-3: #1c5cab;
+  --seq-4: #2a78d6;
+  --seq-5: #5598e7;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-page: var(--page);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-crit: var(--crit);
+  --color-crit-soft: var(--crit-soft);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
 }
