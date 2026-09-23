@@ -1,7 +1,7 @@
 // Проверочные сценарии из ТЗ. Запуск: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BASE_SCORE, optimize, simulate, validate, type Decision } from "./engine.ts";
+import { BASE_SCORE, optimize, optimizeRobust, robustness, simulate, timeline, validate, type Decision } from "./engine.ts";
 
 const example: Decision[] = [
   { measureId: "M7", districtId: "nura" },
@@ -91,4 +91,26 @@ test("оптимизатор с ограничениями: обязательн
   const esilScore = simulate(esil.decisions).districts.find((d) => d.id === "esil")!.scoreAfter;
   assert.equal(esil.objectiveValue, esilScore);
   assert.ok(esilScore > 65);
+});
+
+test("траектория по кварталам: старт = база, 8-й квартал = итоговый Score", () => {
+  const tl = timeline(example);
+  assert.equal(tl.length, 9);
+  assert.equal(tl[0].score, 52.56);
+  assert.equal(tl[8].score, simulate(example).score);
+  for (let q = 1; q < tl.length; q++) assert.ok(tl[q].score >= tl[q - 1].score);
+  assert.deepEqual(tl[1].active, []);
+  assert.ok(tl[2].active.includes("M10"));
+});
+
+test("стресс-тест и устойчивый оптимум", () => {
+  const r = robustness(example);
+  assert.equal(r.outcomes.length, 6);
+  assert.ok(r.failed >= 1, "пример за 95 не влезает в урезанный бюджет");
+  const t0 = Date.now();
+  const [robust] = optimizeRobust(1);
+  console.log("robust", robust, Date.now() - t0, "ms");
+  const rr = robustness(robust.decisions);
+  assert.equal(rr.failed, 0);
+  assert.equal(rr.worst, robust.worst);
 });

@@ -70,6 +70,14 @@ export function realizedShare(m: Measure): number {
   return (RULES.horizon - m.lag) / RULES.horizon;
 }
 
+/**
+ * Доля эффекта, накопленная к кварталу q (0…8): мера начинает работать после лага и набирает 1/8 за квартал.
+ * При q = 8 совпадает с формулой ТЗ (8 − L)/8.
+ */
+export function shareAt(m: Measure, quarter: number): number {
+  return Math.max(0, Math.min(quarter, RULES.horizon) - m.lag) / RULES.horizon;
+}
+
 export function validate(decisions: Decision[], eventId?: string | null): ValidationResult {
   const errors: string[] = [];
   const issues: Issue[] = [];
@@ -186,14 +194,14 @@ function districtScore(values: IndicatorValues): number {
 }
 
 /** Ядро расчёта без валидации — используется и оптимизатором. */
-function compute(decisions: Decision[], eventId?: string | null) {
+function compute(decisions: Decision[], eventId?: string | null, quarter: number = RULES.horizon) {
   const start = startValues(eventId);
   const raw = new Map<string, IndicatorValues>([...start].map(([id, v]) => [id, { ...v }]));
   const targets = (d: Decision) => (d.districtId ? [d.districtId] : DISTRICTS.map((x) => x.id));
 
   for (const d of decisions) {
     const m = measureById.get(d.measureId)!;
-    const share = realizedShare(m);
+    const share = shareAt(m, quarter);
     for (const id of targets(d)) {
       const vals = raw.get(id)!;
       for (const [k, e] of Object.entries(m.effects) as [Indicator, number][]) vals[k] += e * share;
@@ -205,6 +213,8 @@ function compute(decisions: Decision[], eventId?: string | null) {
     const first = decisions.find((d) => d.measureId === s.first);
     const second = decisions.find((d) => d.measureId === s.second);
     if (!first || !second) continue;
+    // Синергия появляется, когда обе меры уже заработали.
+    if (shareAt(measureById.get(s.first)!, quarter) <= 0 || shareAt(measureById.get(s.second)!, quarter) <= 0) continue;
     for (const id of targets(first)) raw.get(id)![s.indicator] += s.bonus;
     appliedSynergies.push({ pair: `${s.first}+${s.second}`, indicator: s.indicator, bonus: s.bonus, district: districtName(first.districtId) });
   }
@@ -315,23 +325,12 @@ export interface ConstrainedPlan extends RankedPlan {
   objectiveValue: number;
 }
 
-/**
- * Перебор всех допустимых наборов (~700 тыс. без ограничений) с учётом события и ограничений.
- * Без ограничений результат кэшируется — это глобальный оптимум по правилам ТЗ.
- */
-export function optimize(top = 5, eventId?: string | null, constraints: PlanConstraints = {}): ConstrainedPlan[] {
-  const constrained = Object.values(constraints).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== "score"));
-  const key = eventId ?? "";
-  const cached = !constrained && optimumCache.get(key);
-  if (cached) return cached.slice(0, top) as ConstrainedPlan[];
-
+/** Обходит все допустимые по правилам наборы из 5 мер с учётом ограничений и вызывает cb для каждого. */
+export function forEachPlan(eventId: string | null | undefined, constraints: PlanConstraints, cb: (plan: Decision[], cost: number) => void) {
   const budget = Math.min(budgetFor(eventId), constraints.maxCost ?? Infinity);
   const exclude = new Set(constraints.exclude ?? []);
   const excludeDistricts = new Set(constraints.excludeDistricts ?? []);
   const must = constraints.mustInclude ?? [];
-  const objective = constraints.objective && constraints.objective !== "score" ? constraints.objective : null;
-  const keep = Math.max(20, top);
-  const best: ConstrainedPlan[] = [];
   const ids = MEASURES.map((m) => m.id).filter((id) => !exclude.has(id));
 
   const combos: string[][] = [];
@@ -354,21 +353,38 @@ export function optimize(top = 5, eventId?: string | null, constraints: PlanCons
     });
     const place = (i: number, acc: Decision[]) => {
       if (i === ms.length) {
-        if (!validate(acc, eventId).ok) return;
-        const r = compute(acc, eventId);
-        const value = objective ? r.districts.find((d) => d.id === objective)?.scoreAfter ?? r.score : r.score;
-        const worst = best[best.length - 1];
-        if (best.length < keep || value > worst.objectiveValue || (value === worst.objectiveValue && r.score > worst.score)) {
-          best.push({ decisions: acc, score: r.score, cost, objectiveValue: value });
-          best.sort((a, b) => b.objectiveValue - a.objectiveValue || b.score - a.score);
-          if (best.length > keep) best.pop();
-        }
+        if (validate(acc, eventId).ok) cb(acc, cost);
         return;
       }
       for (const districtId of options[i]) place(i + 1, [...acc, { measureId: ms[i].id, districtId }]);
     };
     place(0, []);
   }
+}
+
+/**
+ * Перебор всех допустимых наборов (~700 тыс. без ограничений) с учётом события и ограничений.
+ * Без ограничений результат кэшируется — это глобальный оптимум по правилам ТЗ.
+ */
+export function optimize(top = 5, eventId?: string | null, constraints: PlanConstraints = {}): ConstrainedPlan[] {
+  const constrained = Object.values(constraints).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== "score"));
+  const key = eventId ?? "";
+  const cached = !constrained && optimumCache.get(key);
+  if (cached) return cached.slice(0, top) as ConstrainedPlan[];
+
+  const objective = constraints.objective && constraints.objective !== "score" ? constraints.objective : null;
+  const keep = Math.max(20, top);
+  const best: ConstrainedPlan[] = [];
+  forEachPlan(eventId, constraints, (acc, cost) => {
+    const r = compute(acc, eventId);
+    const value = objective ? r.districts.find((d) => d.id === objective)?.scoreAfter ?? r.score : r.score;
+    const worst = best[best.length - 1];
+    if (best.length < keep || value > worst.objectiveValue || (value === worst.objectiveValue && r.score > worst.score)) {
+      best.push({ decisions: acc, score: r.score, cost, objectiveValue: value });
+      best.sort((a, b) => b.objectiveValue - a.objectiveValue || b.score - a.score);
+      if (best.length > keep) best.pop();
+    }
+  });
 
   const ranked = best.map((p) => ({ ...p, score: round(p.score), objectiveValue: round(p.objectiveValue) }));
   if (!constrained) optimumCache.set(key, ranked);
@@ -401,4 +417,100 @@ export function bestSwap(decisions: Decision[], eventId?: string | null): SwapSu
     }
   });
   return best;
+}
+
+export interface QuarterPoint {
+  quarter: number;
+  score: number;
+  districts: DistrictResult[];
+  /** Меры, уже приносящие эффект в этом квартале. */
+  active: string[];
+}
+
+/** Траектория плана по кварталам 0…8 — как Score растёт по мере срабатывания мер. */
+export function timeline(decisions: Decision[], eventId?: string | null): QuarterPoint[] {
+  return Array.from({ length: RULES.horizon + 1 }, (_, q) => {
+    const r = compute(decisions, eventId, q);
+    return {
+      quarter: q,
+      score: round(r.score),
+      districts: r.districts.map((d) => ({
+        ...d,
+        after: Object.fromEntries(INDICATORS.map((k) => [k, round(d.after[k])])) as IndicatorValues,
+        scoreBefore: round(d.scoreBefore),
+        scoreAfter: round(d.scoreAfter),
+      })),
+      active: decisions.filter((d) => shareAt(measureById.get(d.measureId)!, q) > 0).map((d) => d.measureId),
+    };
+  });
+}
+
+export interface ScenarioOutcome {
+  eventId: string | null;
+  valid: boolean;
+  score: number | null;
+  /** Причина невалидности (например, план не влезает в урезанный бюджет). */
+  reason?: string;
+}
+
+export interface Robustness {
+  outcomes: ScenarioOutcome[];
+  /** Худший Score среди сценариев, где план валиден. */
+  worst: number | null;
+  worstEvent: string | null;
+  /** Сценарии, в которых план невыполним (урезанный бюджет). */
+  failed: number;
+}
+
+/** Стресс-тест: план прогоняется без события и через все события сразу. */
+export function robustness(decisions: Decision[]): Robustness {
+  const scenarios: (string | null)[] = [null, ...EVENTS.map((e) => e.id)];
+  const outcomes = scenarios.map((eventId) => {
+    const v = validate(decisions, eventId);
+    return v.ok ? { eventId, valid: true, score: round(scoreOnly(decisions, eventId)) } : { eventId, valid: false, score: null, reason: v.errors[0] };
+  });
+  const valid = outcomes.filter((o) => o.valid);
+  const worstO = valid.reduce<ScenarioOutcome | null>((a, o) => (!a || (o.score ?? 0) < (a.score ?? 0) ? o : a), null);
+  return { outcomes, worst: worstO?.score ?? null, worstEvent: worstO?.eventId ?? null, failed: outcomes.length - valid.length };
+}
+
+export interface RobustPlan {
+  decisions: Decision[];
+  cost: number;
+  worst: number;
+  worstEvent: string | null;
+  base: number;
+}
+
+let robustCache: RobustPlan[] | null = null;
+
+/**
+ * Устойчивый оптимум (максимин): план, который валиден во всех событиях (влезает в самый урезанный бюджет)
+ * и максимизирует худший Score по всем сценариям.
+ */
+export function optimizeRobust(top = 3): RobustPlan[] {
+  if (robustCache) return robustCache.slice(0, top);
+  const scenarios: (string | null)[] = [null, ...EVENTS.map((e) => e.id)];
+  const minBudget = Math.min(...scenarios.map((e) => budgetFor(e)));
+  const best: RobustPlan[] = [];
+  const keep = 10;
+  forEachPlan(null, { maxCost: minBudget }, (plan, cost) => {
+    let worst = Infinity;
+    let worstEvent: string | null = null;
+    let base = 0;
+    for (const e of scenarios) {
+      const sc = scoreOnly(plan, e);
+      if (e === null) base = sc;
+      if (sc < worst) {
+        worst = sc;
+        worstEvent = e;
+      }
+      if (best.length >= keep && worst <= best[best.length - 1].worst) return;
+    }
+    best.push({ decisions: plan, cost, worst: round(worst), worstEvent, base: round(base) });
+    best.sort((a, b) => b.worst - a.worst || b.base - a.base);
+    if (best.length > keep) best.pop();
+  });
+  robustCache = best;
+  return best.slice(0, top);
 }

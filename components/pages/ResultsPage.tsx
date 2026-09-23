@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useApp } from "../AppState";
 import { ContributionChart, DistrictDumbbell } from "../charts";
 import { CityMap } from "../CityMap";
+import { StressTest } from "../StressTest";
+import { Timeline } from "../Timeline";
+import { timeline } from "@/lib/engine";
 import { ExplanationView } from "../ExplanationView";
 import { Heatmap } from "../Heatmap";
 import { Button, Card, CardTitle, StatusBadge } from "../ui";
@@ -13,6 +16,9 @@ export default function ResultsPage() {
   const app = useApp();
   const { tr, result, contrib, complete, explanation, explaining, explainError, runExplain, optimum, setOptimum, eventId, setDecisions, saved, persistSaved, setEventId } = app;
   const [optimizing, setOptimizing] = useState(false);
+  const [quarter, setQuarter] = useState(8);
+  const points = timeline(app.decisions, eventId);
+  const mapDistricts = points[quarter].districts;
 
   const runOptimize = async () => {
     setOptimizing(true);
@@ -32,7 +38,19 @@ export default function ResultsPage() {
         <CardTitle hint={tr.lang === "kz" ? "Аудандар шараларыңызбен бірге «өседі». Тінтуірді апарсаңыз — толық көрсеткіштер." : "Районы «вырастают» вместе с вашими мерами. Наведите на район — все показатели."}>
           {tr.lang === "kz" ? "Астана 3D" : "Астана в 3D"}
         </CardTitle>
-        <CityMap districts={result.districts} weakest={result.weakestDistrict} />
+        <CityMap districts={mapDistricts} weakest={result.weakestDistrict} />
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="mb-3">
+            <h3 className="font-semibold">{tr.t("tlTitle")}</h3>
+            <p className="text-sm text-ink-2">{tr.t("tlHint")}</p>
+          </div>
+          <Timeline points={points} decisions={app.decisions} quarter={quarter} setQuarter={setQuarter} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle hint={tr.t("stressHint")}>{tr.t("stressTitle")}</CardTitle>
+        <StressTest decisions={app.decisions} complete={complete} onApply={setDecisions} />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">

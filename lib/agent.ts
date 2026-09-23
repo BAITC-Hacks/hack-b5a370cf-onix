@@ -2,7 +2,7 @@
 // LLM планирует шаги и формулирует ответ, но каждое число получает только из вызовов инструментов.
 
 import { DIRECTION_LABELS, DISTRICTS, INDICATOR_INFO, MEASURES, RULES } from "./data.ts";
-import { districtName, getEvent, optimize, simulate, validate, type Decision, type PlanConstraints } from "./engine.ts";
+import { districtName, getEvent, optimize, optimizeRobust, robustness, simulate, validate, type Decision, type PlanConstraints } from "./engine.ts";
 import { findUnverifiedNumbersInText } from "./explain.ts";
 
 export interface AgentMessage {
@@ -62,6 +62,22 @@ const TOOLS = [
         },
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "stress_test_plan",
+      description: "Прогнать план из 5 мер через все сценарии сразу (без события + 5 городских событий): Score в каждом, где план невыполним, худший случай.",
+      parameters: { type: "object", properties: { decisions: { type: "array", items: decisionSchema } }, required: ["decisions"], additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_robust_plan",
+      description: "Найти устойчивый план (максимин): выполним во всех событиях и даёт лучший Score в худшем сценарии.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
   {
@@ -128,6 +144,7 @@ ${ev ? `\nАКТИВНО СОБЫТИЕ: ${ev.title}. ${ev.description}` : ""}
 - Для «что если» — simulate_plan. Для «как лучше/оптимизируй/подними район» — find_best_plans с нужными ограничениями.
 - ОБЯЗАТЕЛЬНО вызывай propose_plan каждый раз, когда в ответе рекомендуешь конкретный план из 5 мер — иначе пользователь не сможет его применить.
 - В ответе сравни с текущим планом пользователя (если он есть) и назови компромисс: что теряем ради цели.
+- Про кризисы, риски, «выдержит ли план» — stress_test_plan; для плана, устойчивого ко всем событиям, — find_robust_plan.
 - Если запрос невыполним по правилам — объясни, какое правило мешает.`;
 }
 
@@ -161,6 +178,13 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
   const steps: AgentStep[] = [];
   const toolOutputs: unknown[] = [history, current.length ? simulateTool(current, eventId) : null];
   let proposal: AgentReply["proposal"];
+  // Лучший план, найденный инструментами, — страховка, если модель забыла вызвать propose_plan.
+  let lastFound: Decision[] | null = null;
+  const attachFallback = () => {
+    if (proposal || !lastFound || !validate(lastFound, eventId).ok) return;
+    const r = simulate(lastFound, eventId);
+    proposal = { decisions: lastFound, score: r.score, cost: r.cost, rationale: "Лучший план, найденный инструментом" };
+  };
   let model: string | undefined;
 
   const controller = new AbortController();
@@ -173,6 +197,7 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
       const calls: { id: string; function: { name: string; arguments: string } }[] = message.tool_calls ?? [];
       if (!calls.length) {
         const reply = String(message.content ?? "").trim();
+        attachFallback();
         return { reply, steps, proposal, model, unverifiedNumbers: findUnverifiedNumbersInText(reply, toolOutputs) };
       }
       for (const call of calls) {
@@ -192,6 +217,7 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
               objective: args.objective,
             };
             const plans = optimize(Math.min(args.top ?? 3, 5), eventId, c);
+            if (plans[0]) lastFound = plans[0].decisions;
             output = plans.length
               ? plans.map((p) => ({ план: planText(p.decisions), score: p.score, стоимость: p.cost, ...(c.objective && c.objective !== "score" ? { [`балл_${districtName(c.objective)}`]: p.objectiveValue } : {}) }))
               : "Нет ни одного допустимого плана с такими ограничениями.";
@@ -203,6 +229,22 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
               c.maxCost ? `бюджет ≤ ${c.maxCost}` : "",
             ].filter(Boolean);
             steps.push({ tool: "Перебор планов", summary: `${parts.join(" · ")} → ${plans.length ? `лучший ${plans[0].score}` : "решений нет"}` });
+          } else if (call.function.name === "stress_test_plan") {
+            const ds = toDecisions(args.decisions);
+            const r = robustness(ds);
+            output = {
+              план: planText(ds),
+              сценарии: r.outcomes.map((o) => ({ событие: o.eventId ? getEvent(o.eventId)!.title : "без события", score: o.score, выполним: o.valid, причина: o.reason })),
+              худший_score: r.worst,
+              худшее_событие: r.worstEvent ? getEvent(r.worstEvent)!.title : "без события",
+              невыполним_в_сценариях: r.failed,
+            };
+            steps.push({ tool: "Стресс-тест", summary: `${planText(ds)} → худший ${r.worst ?? "—"}, провалов ${r.failed}` });
+          } else if (call.function.name === "find_robust_plan") {
+            const plans = optimizeRobust(3);
+            if (plans[0]) lastFound = plans[0].decisions;
+            output = plans.map((p) => ({ план: planText(p.decisions), худший_score: p.worst, score_без_событий: p.base, стоимость: p.cost }));
+            steps.push({ tool: "Поиск устойчивого плана", summary: `лучший худший случай ${plans[0]?.worst}` });
           } else if (call.function.name === "propose_plan") {
             const ds = toDecisions(args.decisions);
             const v = validate(ds, eventId);
