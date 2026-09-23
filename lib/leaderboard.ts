@@ -1,6 +1,7 @@
 // Общий рейтинг команд: Upstash в деплое, локальный файл без Redis. Score считает движок, а не клиент.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { robustness, sanitizeDecisions, simulate, validate, type Decision } from "./engine.ts";
 import { hasUpstash, upstashCommand } from "./upstash.ts";
@@ -24,7 +25,8 @@ type StoredEntry = LeaderboardEntry & { ownerHash?: string; teamKey?: string };
 type SubmitFailure = { ok: false; code: "invalid_team" | "invalid_token" | "invalid_plan" | "baseline_only" | "team_taken" | "not_ranked"; errors: string[] };
 type SubmitResult = { ok: true; entry: LeaderboardEntry; rank: number } | SubmitFailure;
 
-const FILE = path.join(process.cwd(), "data", "leaderboard.json");
+// На Vercel файловая система только для чтения, кроме /tmp: демо-режим хранит рейтинг там (в пределах жизни инстанса).
+const FILE = process.env.VERCEL === "1" ? path.join(os.tmpdir(), "akim-leaderboard.json") : path.join(process.cwd(), "data", "leaderboard.json");
 const REDIS_KEY = "akim:leaderboard:v1";
 const MAX_ENTRIES = 500;
 let cache: StoredEntry[] | null = null;
@@ -46,7 +48,7 @@ function publicEntry(entry: StoredEntry): LeaderboardEntry {
 
 function redisStorageEnabled(): boolean {
   const configured = hasUpstash();
-  if (!configured && process.env.VERCEL === "1") {
+  if (!configured && process.env.VERCEL === "1" && process.env.AKIM_DEMO_MODE !== "1") {
     throw new Error("The leaderboard requires Upstash Redis on Vercel.");
   }
   return configured;

@@ -86,7 +86,8 @@ async function consumeQuota(request: Request, endpoint: AiEndpoint): Promise<Quo
   if (!hasUpstash()) {
     // Serverless instances do not share memory. Never leave paid routes open on
     // Vercel when the Redis credentials are missing.
-    if (process.env.VERCEL || process.env.VERCEL_ENV) throw new Error("Redis required on Vercel");
+    // AKIM_DEMO_MODE=1 — осознанный режим демо на хакатоне: лимиты в памяти каждого инстанса вместо Redis.
+    if ((process.env.VERCEL || process.env.VERCEL_ENV) && process.env.AKIM_DEMO_MODE !== "1") throw new Error("Redis required on Vercel");
     return consumeInMemory(keys, allowedCounts, windows);
   }
   const result = await upstashCommand<unknown>([

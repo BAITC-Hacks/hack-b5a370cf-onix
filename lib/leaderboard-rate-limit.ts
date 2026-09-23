@@ -39,7 +39,7 @@ const consumeLocal = createMemorySubmissionLimiter();
 
 async function consume(request: Request): Promise<Quota> {
   if (!hasUpstash()) {
-    if (process.env.VERCEL === "1") throw new Error("Redis required on Vercel");
+    if (process.env.VERCEL === "1" && process.env.AKIM_DEMO_MODE !== "1") throw new Error("Redis required on Vercel");
     return consumeLocal();
   }
   const forwarded = process.env.VERCEL === "1" ? request.headers.get("x-vercel-forwarded-for") : null;
