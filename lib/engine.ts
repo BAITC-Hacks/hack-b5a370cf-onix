@@ -328,6 +328,102 @@ export interface ConstrainedPlan extends RankedPlan {
   objectiveValue: number;
 }
 
+
+// ---------- Быстрый числовой путь для перебора (те же правила и формула, без объектов и строк) ----------
+
+const N_IND = INDICATORS.length;
+const IDX = (d: number, k: number) => d * N_IND + k;
+const districtIndex = new Map(DISTRICTS.map((d, i) => [d.id, i]));
+const weights = INDICATORS.map((k) => INDICATOR_INFO[k].weight);
+const pops = DISTRICTS.map((d) => d.population);
+
+/** Стартовые значения (с учётом события) в плоском массиве 5×10. */
+const startCache = new Map<string, Float64Array>();
+function startFlat(eventId?: string | null): Float64Array {
+  const key = getEvent(eventId)?.id ?? "";
+  let arr = startCache.get(key);
+  if (!arr) {
+    arr = new Float64Array(DISTRICTS.length * N_IND);
+    const start = startValues(eventId);
+    DISTRICTS.forEach((d, di) => INDICATORS.forEach((k, ki) => (arr![IDX(di, ki)] = start.get(d.id)![k])));
+    startCache.set(key, arr);
+  }
+  return arr;
+}
+
+/** Вклад меры в конкретном районе (или во всех для городских) за полный горизонт. */
+const deltaCache = new Map<string, Float64Array>();
+function deltaFlat(m: Measure, districtId: string | null): Float64Array {
+  const key = `${m.id}:${districtId ?? "*"}`;
+  let arr = deltaCache.get(key);
+  if (!arr) {
+    arr = new Float64Array(DISTRICTS.length * N_IND);
+    const share = realizedShare(m);
+    const targets = m.scope === "city" ? DISTRICTS.map((_, i) => i) : districtIndex.has(districtId ?? "") ? [districtIndex.get(districtId!)!] : [];
+    for (const di of targets) for (const [k, e] of Object.entries(m.effects) as [Indicator, number][]) arr[IDX(di, INDICATORS.indexOf(k))] += e * share;
+    deltaCache.set(key, arr);
+  }
+  return arr;
+}
+
+const synergyFast = SYNERGIES.map((s) => ({ ...s, k: INDICATORS.indexOf(s.indicator) }));
+
+/** Score и баллы районов для набора — численно идентично compute() при quarter = 8. */
+export function evalFast(decisions: Decision[], eventId?: string | null): { score: number; districts: number[] } {
+  const vals = Float64Array.from(startFlat(eventId));
+  for (const d of decisions) {
+    const m = measureById.get(d.measureId);
+    if (!m) continue;
+    const delta = deltaFlat(m, d.districtId ?? null);
+    for (let i = 0; i < vals.length; i++) vals[i] += delta[i];
+  }
+  for (const s of synergyFast) {
+    const first = decisions.find((d) => d.measureId === s.first);
+    if (!first || !decisions.some((d) => d.measureId === s.second)) continue;
+    const fm = measureById.get(s.first)!;
+    if (fm.scope === "city") for (let di = 0; di < DISTRICTS.length; di++) vals[IDX(di, s.k)] += s.bonus;
+    else if (districtIndex.has(first.districtId ?? "")) vals[IDX(districtIndex.get(first.districtId!)!, s.k)] += s.bonus;
+  }
+  let crit = 0;
+  let avg = 0;
+  let min = Infinity;
+  const districts: number[] = [];
+  for (let di = 0; di < DISTRICTS.length; di++) {
+    let dScore = 0;
+    for (let ki = 0; ki < N_IND; ki++) {
+      let v = vals[IDX(di, ki)];
+      v = v < 0 ? 0 : v > 100 ? 100 : v;
+      if (v < RULES.criticalThreshold) crit++;
+      dScore += weights[ki] * v;
+    }
+    districts.push(dScore);
+    avg += pops[di] * dScore;
+    if (dScore < min) min = dScore;
+  }
+  return { score: RULES.avgWeight * avg + RULES.minWeight * min - RULES.criticalPenalty * crit, districts };
+}
+
+/** Быстрая проверка правил для перебора: направления и несовместимости (остальное гарантирует сама генерация). */
+function comboAllowed(ms: Measure[]): boolean {
+  const perDir = new Map<Direction, number>();
+  for (const m of ms) {
+    const n = (perDir.get(m.direction) ?? 0) + 1;
+    if (n > RULES.maxPerDirection) return false;
+    perDir.set(m.direction, n);
+  }
+  for (const c of CONFLICTS) if (!c.sameDistrictOnly && ms.some((m) => m.id === c.a) && ms.some((m) => m.id === c.b)) return false;
+  return true;
+}
+function placementAllowed(plan: Decision[]): boolean {
+  for (const c of CONFLICTS) {
+    if (!c.sameDistrictOnly) continue;
+    const a = plan.find((d) => d.measureId === c.a);
+    const b = plan.find((d) => d.measureId === c.b);
+    if (a && b && a.districtId && a.districtId === b.districtId) return false;
+  }
+  return true;
+}
+
 /** Обходит все допустимые по правилам наборы из 5 мер с учётом ограничений и вызывает cb для каждого. */
 export function forEachPlan(eventId: string | null | undefined, constraints: PlanConstraints, cb: (plan: Decision[], cost: number) => void) {
   const budget = Math.min(budgetFor(eventId), constraints.maxCost ?? Infinity);
@@ -347,7 +443,7 @@ export function forEachPlan(eventId: string | null | undefined, constraints: Pla
     if (!must.every((m) => combo.includes(m.measureId))) continue;
     const ms = combo.map((id) => measureById.get(id)!);
     const cost = ms.reduce((s, m) => s + m.cost, 0);
-    if (cost > budget) continue;
+    if (cost > budget || !comboAllowed(ms)) continue;
     const options = ms.map((m) => {
       if (m.scope === "city") return [null];
       const fixed = must.find((x) => x.measureId === m.id)?.districtId;
@@ -356,7 +452,7 @@ export function forEachPlan(eventId: string | null | undefined, constraints: Pla
     });
     const place = (i: number, acc: Decision[]) => {
       if (i === ms.length) {
-        if (validate(acc, eventId).ok) cb(acc, cost);
+        if (placementAllowed(acc)) cb(acc, cost);
         return;
       }
       for (const districtId of options[i]) place(i + 1, [...acc, { measureId: ms[i].id, districtId }]);
@@ -379,9 +475,10 @@ export function optimize(top = 5, eventId?: string | null, constraints: PlanCons
   if (objective && !districtById.has(objective)) throw new Error(`Неизвестная цель оптимизации: ${objective}`);
   const keep = Math.max(20, top);
   const best: ConstrainedPlan[] = [];
+  const objIndex = objective ? districtIndex.get(objective)! : -1;
   forEachPlan(eventId, constraints, (acc, cost) => {
-    const r = compute(acc, eventId);
-    const value = objective ? r.districts.find((d) => d.id === objective)?.scoreAfter ?? r.score : r.score;
+    const r = evalFast(acc, eventId);
+    const value = objective ? r.districts[objIndex] : r.score;
     const worst = best[best.length - 1];
     if (best.length < keep || value > worst.objectiveValue || (value === worst.objectiveValue && r.score > worst.score)) {
       best.push({ decisions: acc, score: r.score, cost, objectiveValue: value });
@@ -503,7 +600,7 @@ export function optimizeRobust(top = 3): RobustPlan[] {
     let worstEvent: string | null = null;
     let base = 0;
     for (const e of scenarios) {
-      const sc = scoreOnly(plan, e);
+      const sc = evalFast(plan, e).score;
       if (e === null) base = sc;
       if (sc < worst) {
         worst = sc;
@@ -545,3 +642,12 @@ export function sanitizeDecisions(input: unknown, max = RULES.decisions): Decisi
 
 /** Нормализует id события: неизвестные значения превращаются в null (без события). */
 export const normalizeEventId = (raw: unknown): string | null => (typeof raw === "string" && getEvent(raw) ? raw : null);
+
+/** Прогрев кэшей оптимума и устойчивого плана (вызывается при старте сервера). */
+export function warmUp() {
+  const t0 = Date.now();
+  optimize(5, null);
+  for (const e of EVENTS) optimize(5, e.id);
+  optimizeRobust(3);
+  return Date.now() - t0;
+}

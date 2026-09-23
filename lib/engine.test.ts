@@ -1,7 +1,7 @@
 // Проверочные сценарии из ТЗ. Запуск: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BASE_SCORE, normalizeEventId, optimize, optimizeRobust, robustness, sanitizeDecisions, simulate, timeline, validate, type Decision } from "./engine.ts";
+import { BASE_SCORE, evalFast, normalizeEventId, optimize, optimizeRobust, robustness, sanitizeDecisions, simulate, timeline, validate, type Decision } from "./engine.ts";
 
 const example: Decision[] = [
   { measureId: "M7", districtId: "nura" },
@@ -127,4 +127,26 @@ test("мусор на входе не роняет расчёт: неизвес�
   assert.equal(validate([{ measureId: "M7", districtId: null }]).issues.some((i) => i.code === "needDistrict"), true);
   assert.equal(normalizeEventId("bogus"), null);
   assert.equal(normalizeEventId("heating"), "heating");
+});
+
+test("быстрый путь перебора численно совпадает с compute()", () => {
+  const measures = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12", "M13", "M14"];
+  const districts = ["esil", "almaty", "saryarka", "baikonur", "nura"];
+  let seed = 42;
+  const rnd = (n: number) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  let checked = 0;
+  for (let i = 0; i < 3000; i++) {
+    const ids = [...measures].sort(() => rnd(3) - 1).slice(0, 5);
+    const plan = ids.map((id) => ({ measureId: id, districtId: ["M2", "M6", "M12", "M14"].includes(id) ? null : districts[rnd(5)] }));
+    const ev = [null, "heating", "transfer", "smog", "baby-boom", "flood"][rnd(6)];
+    if (!validate(plan, ev).ok) continue;
+    assert.ok(Math.abs(evalFast(plan, ev).score - simulate(plan, ev).score) < 0.006, `plan ${JSON.stringify(plan)} ev ${ev}`);
+    checked++;
+  }
+  assert.ok(checked > 500, `проверено ${checked}`);
+  const t0 = Date.now();
+  const [best] = optimize(1, "smog");
+  const ms = Date.now() - t0;
+  assert.equal(best.score, optimize(1, "smog")[0].score);
+  console.log("optimize(smog)", ms, "ms");
 });
