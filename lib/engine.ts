@@ -531,8 +531,12 @@ export function sanitizeDecisions(input: unknown, max = RULES.decisions): Decisi
     if (!x || typeof x !== "object") continue;
     const { measureId, districtId } = x as { measureId?: unknown; districtId?: unknown };
     if (typeof measureId !== "string" || !measureById.has(measureId)) continue;
-    if (out.some((d) => d.measureId === measureId)) continue;
     const district = measureById.get(measureId)!.scope === "district" && typeof districtId === "string" && districtById.has(districtId) ? districtId : null;
+    const dup = out.find((d) => d.measureId === measureId);
+    if (dup) {
+      if (!dup.districtId && district) dup.districtId = district; // из дубликатов оставляем тот, где район корректен
+      continue;
+    }
     out.push({ measureId, districtId: district });
     if (out.length >= max) break;
   }

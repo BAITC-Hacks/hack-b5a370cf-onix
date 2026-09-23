@@ -15,6 +15,7 @@ export function Shell({ children }: { children: ReactNode }) {
     ["/plan", tr.t("navPlan")],
     ["/results", tr.t("navResults")],
     ["/advisor", tr.t("navAdvisor")],
+    ["/leaderboard", tr.t("navLeaderboard")],
     ["/method", tr.t("navMethod")],
   ];
 

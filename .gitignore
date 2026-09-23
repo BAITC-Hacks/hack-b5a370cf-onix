@@ -43,3 +43,6 @@ next-env.d.ts
 !.env.example
 .claude/
 /public/maplibre/
+
+# Общий рейтинг команд (создаётся сервером)
+/data/leaderboard.json

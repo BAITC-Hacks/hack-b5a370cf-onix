@@ -124,7 +124,7 @@ export default function PlanPage() {
                       <span className="w-8 text-xs font-semibold text-ink-3">{m.id}</span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{tr.measure(m.id)}</span>
-                        <span className="text-xs text-accent-strong">{tr.district(d.districtId)}</span>
+                        <span className={`text-xs ${d.districtId || m.scope === "city" ? "text-accent-strong" : "text-crit"}`}>{tr.district(d.districtId, m.scope)}</span>
                       </span>
                       <span className="text-xs text-ink-2">{m.cost}</span>
                       <button onClick={() => remove(m.id)} className="rounded px-1 text-ink-3 hover:bg-card hover:text-ink" aria-label={`${tr.t("remove")} ${m.id}`}>
@@ -203,7 +203,14 @@ export default function PlanPage() {
                 <Button variant="ghost" onClick={() => setDecisions([])} disabled={!decisions.length}>
                   {tr.t("reset")}
                 </Button>
-                <Link href="/results" className="col-span-2 text-center text-sm font-medium text-accent-strong hover:underline">
+                <Link
+                  href="/leaderboard"
+                  aria-disabled={!complete}
+                  className={`inline-flex items-center justify-center rounded-lg border border-line px-3 py-1.5 text-sm font-medium ${complete ? "hover:bg-card-2" : "pointer-events-none opacity-40"}`}
+                >
+                  🏆 {tr.t("lbSubmit")}
+                </Link>
+                <Link href="/results" className="inline-flex items-center justify-center text-sm font-medium text-accent-strong hover:underline">
                   {tr.t("toResults")}
                 </Link>
               </div>

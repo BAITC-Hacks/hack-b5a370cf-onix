@@ -118,7 +118,7 @@ test("стресс-тест и устойчивый оптимум", () => {
 test("мусор на входе не роняет расчёт: неизвестные меры/районы, районная мера без района", () => {
   const junk = sanitizeDecisions([{ measureId: "ZZ" }, { measureId: "M7", districtId: "mars" }, { measureId: "M12", districtId: "nura" }, 5, null, { measureId: "M7", districtId: "nura" }]);
   assert.deepEqual(junk, [
-    { measureId: "M7", districtId: null },
+    { measureId: "M7", districtId: "nura" },
     { measureId: "M12", districtId: null },
   ]);
   // simulate не должен бросать даже на несанитизированном входе

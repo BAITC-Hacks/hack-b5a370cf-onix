@@ -171,6 +171,15 @@ const ui = {
     robustWorst: "худший случай",
     robustBase: "без событий",
     needPlanStress: "Соберите план из 5 мер, чтобы проверить его на кризисы.",
+    navLeaderboard: "Рейтинг",
+    lbTitle: "Рейтинг команд",
+    lbHint: "Общая таблица для всех, кто открыл приложение: Score и худший случай по кризисам считает сервер, а не клиент. Одна команда — одна строка, новая отправка заменяет старую.",
+    lbEmpty: "Пока нет ни одного плана. Отправьте свой первым.",
+    lbTeam: "Команда",
+    lbSubmit: "Отправить в рейтинг",
+    lbSubmitHint: "Отправляется текущий план из панели «План» вместе с выбранным событием.",
+    lbSent: "Принято! Место в рейтинге:",
+    lbShareHint: "Пусть жюри и другие команды соберут свой план по адресу",
     langNote: "",
   },
   kz: {
@@ -338,6 +347,15 @@ const ui = {
     robustWorst: "ең нашар жағдай",
     robustBase: "оқиғасыз",
     needPlanStress: "Дағдарысқа тексеру үшін 5 шарадан жоспар құрыңыз.",
+    navLeaderboard: "Рейтинг",
+    lbTitle: "Командалар рейтингі",
+    lbHint: "Қосымшаны ашқан барлығына ортақ кесте: Score мен дағдарыстардағы ең нашар жағдайды клиент емес, сервер есептейді. Бір команда — бір жол, жаңа жіберу ескісін ауыстырады.",
+    lbEmpty: "Әзірге бірде-бір жоспар жоқ. Өзіңіздікін бірінші жіберіңіз.",
+    lbTeam: "Команда",
+    lbSubmit: "Рейтингке жіберу",
+    lbSubmitHint: "«Жоспар» панеліндегі ағымдағы жоспар таңдалған оқиғамен бірге жіберіледі.",
+    lbSent: "Қабылданды! Рейтингтегі орын:",
+    lbShareHint: "Қазылар мен басқа командалар өз жоспарын мына мекенжайда құрсын",
     langNote: "",
   },
 } as const;
@@ -418,8 +436,8 @@ export function makeT(lang: Lang) {
   const t = (key: UIKey, params: Record<string, string | number> = {}) =>
     String(dict[key]).replace(/\{(\w+)\}/g, (_, p) => String(params[p] ?? `{${p}}`));
 
-  const district = (id?: string | null) => {
-    if (!id) return dict.wholeCity;
+  const district = (id?: string | null, scope: "city" | "district" = "city") => {
+    if (!id) return scope === "district" ? (lang === "kz" ? "аудан таңдалмаған" : "район не выбран") : dict.wholeCity;
     return lang === "kz" ? districtKz[id]?.name ?? id : DISTRICTS.find((d) => d.id === id)?.name ?? id;
   };
   /** Название района по русскому имени (результаты движка содержат имя). */
