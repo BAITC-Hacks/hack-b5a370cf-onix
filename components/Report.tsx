@@ -77,7 +77,9 @@ export default function Report() {
       </div>
     );
 
-  const date = new Date().toLocaleDateString(lang === "kz" ? "kk-KZ" : "ru-RU", { day: "numeric", month: "long", year: "numeric" });
+  const now = new Date();
+  const KZ_MONTHS = ["қаңтар", "ақпан", "наурыз", "сәуір", "мамыр", "маусым", "шілде", "тамыз", "қыркүйек", "қазан", "қараша", "желтоқсан"];
+  const date = lang === "kz" ? `${now.getDate()} ${KZ_MONTHS[now.getMonth()]} ${now.getFullYear()} ж.` : now.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 print:max-w-none">
