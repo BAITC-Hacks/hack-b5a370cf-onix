@@ -113,6 +113,7 @@ function factsForLLM(ctx: ExplainContext) {
       return s ? { убрать: label(s.remove), добавить: label(s.add), новый_score: s.newScore, прирост: s.gain } : "замен, улучшающих Score, нет";
     })(),
     оптимальный_набор_по_полному_перебору: { score: ctx.optimumScore, меры: ctx.optimumLabel },
+    набор_уже_оптимален: ctx.optimumScore - r.score <= 0.01,
   };
 }
 
@@ -123,7 +124,8 @@ const SYSTEM_PROMPT = `Ты — аналитик городского разви
 - Не выдумывай факты о районах сверх данных.
 - Говори конкретно: какая мера, в каком районе, какой показатель, как изменился.
 - Отдельно отметь компромиссы: что пришлось не делать и какой район/направление остался без внимания.
-- В рекомендациях сравни с оптимальным набором из JSON и назови конкретные замены.
+- Рекомендации строй ТОЛЬКО на полях «лучшая_одиночная_замена» и «оптимальный_набор_по_полному_перебору». Не предлагай ничего, что нарушает правила: лаг и эффект меры изменить нельзя, меру нельзя повторить, решений ровно 5, бюджет фиксирован.
+- Если «набор_уже_оптимален» = true — прямо скажи, что это лучший возможный набор по правилам, и вместо замен опиши, чем пришлось пожертвовать (районы и направления без вложений) и за чем следить.
 - Если есть городское событие — оцени, насколько сценарий на него отвечает (закрыт ли удар по показателям, хватило ли урезанного бюджета).
 Ответ строго JSON без markdown:
 {"summary": "2-3 предложения", "strengths": ["..."], "risks": ["..."], "tradeoffs": ["..."], "recommendations": ["..."]}
@@ -139,7 +141,7 @@ async function callAnthropic(prompt: string, signal: AbortSignal) {
       "x-api-key": process.env.ANTHROPIC_API_KEY!,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model, max_tokens: 1500, system: SYSTEM_PROMPT, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model, max_tokens: 1500, temperature: 0.2, system: SYSTEM_PROMPT, messages: [{ role: "user", content: prompt }] }),
   });
   if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
@@ -147,7 +149,7 @@ async function callAnthropic(prompt: string, signal: AbortSignal) {
 }
 
 async function callOpenAI(prompt: string, signal: AbortSignal) {
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
@@ -155,6 +157,7 @@ async function callOpenAI(prompt: string, signal: AbortSignal) {
     headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
     body: JSON.stringify({
       model,
+      temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },

@@ -32,7 +32,7 @@ cp .env.example .env.local
 | `ANTHROPIC_API_KEY` | нет | — | Анализ через Claude (приоритетный провайдер) |
 | `ANTHROPIC_MODEL` | нет | `claude-sonnet-5` | Модель Claude |
 | `OPENAI_API_KEY` | нет | — | Анализ через OpenAI, если нет ключа Anthropic |
-| `OPENAI_MODEL` | нет | `gpt-4o-mini` | Модель OpenAI |
+| `OPENAI_MODEL` | нет | `gpt-4.1-mini` | Модель OpenAI |
 | `OPENAI_BASE_URL` | нет | `https://api.openai.com/v1` | Любой OpenAI-совместимый endpoint (в том числе NVIDIA NIM или локальная модель) |
 
 Если LLM недоступен (нет ключа, ошибка сети, таймаут 25 с, битый JSON), пользователь получает шаблонный анализ и видит пометку о причине. Приложение не падает.
