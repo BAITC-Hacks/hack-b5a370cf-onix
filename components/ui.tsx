@@ -108,3 +108,101 @@ export function ThemeToggle() {
     </button>
   );
 }
+
+const STEP_ROUTES = ["/plan", "/results", "/advisor", "/leaderboard"];
+
+/** Полоса шагов 1→4: одинаковая на всех рабочих страницах, текущий шаг подсвечен. */
+export function Steps({ current }: { current: number }) {
+  const { tr } = useApp();
+  return (
+    <ol className="flex flex-wrap items-center gap-1 text-xs" aria-label={tr.t("stepWord")}>
+      {tr.steps.map((label, i) => {
+        const n = i + 1;
+        const state = n === current ? "current" : n < current ? "done" : "todo";
+        return (
+          <li key={label} className="flex items-center gap-1">
+            <a
+              href={STEP_ROUTES[i]}
+              className={`inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 ${state === "current" ? "bg-accent text-white" : state === "done" ? "bg-card-2 text-ink" : "text-ink-3 hover:bg-card-2"}`}
+              aria-current={state === "current" ? "step" : undefined}
+            >
+              <span className={`grid size-5 place-items-center rounded-full text-[11px] font-bold ${state === "current" ? "bg-white/25" : state === "done" ? "bg-good text-white" : "bg-card-2"}`}>
+                {state === "done" ? "✓" : n}
+              </span>
+              {label}
+            </a>
+            {n < tr.steps.length && <span className="text-ink-3">›</span>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** Единая шапка страницы: шаг, заголовок в одну строку, подзаголовок и одно главное действие. */
+export function PageHeader({ step, title, sub, action }: { step?: number; title: string; sub?: string; action?: ReactNode }) {
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-3">
+      <div className="min-w-0">
+        {step && (
+          <div className="mb-2">
+            <Steps current={step} />
+          </div>
+        )}
+        <h1 className="text-2xl font-bold leading-tight sm:text-3xl">{title}</h1>
+        {sub && <p className="mt-1 text-sm text-ink-2">{sub}</p>}
+      </div>
+      {action}
+    </header>
+  );
+}
+
+/** Раскрывающийся блок для второстепенного содержимого — чтобы страница не превращалась в простыню. */
+export function Details({ title, children, open }: { title: string; children: ReactNode; open?: boolean }) {
+  return (
+    <details open={open} className="group rounded-2xl border border-line bg-card">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-base font-semibold [&::-webkit-details-marker]:hidden">
+        <span className="grid size-6 place-items-center rounded-md bg-card-2 text-sm transition group-open:rotate-90">›</span>
+        {title}
+      </summary>
+      <div className="space-y-6 px-5 pb-5">{children}</div>
+    </details>
+  );
+}
+
+/** Большой Score с дельтой и тремя цифрами — один и тот же блок на «Плане» и «Результатах». */
+export function ScoreHero({ compact }: { compact?: boolean }) {
+  const { tr, result, decisions } = useApp();
+  const delta = result.delta;
+  return (
+    <div className={`rounded-2xl bg-accent text-white ${compact ? "p-4" : "p-5"}`}>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-sm opacity-85">Astana {tr.t("score")}</div>
+        <div className="text-xs opacity-75">{decisions.length ? `${decisions.length}/5` : tr.t("noPlanYet")}</div>
+      </div>
+      <div className="mt-1 flex items-end gap-3">
+        <span className={`font-bold leading-none ${compact ? "text-4xl" : "text-5xl"}`}>{result.score.toFixed(2)}</span>
+        <span className={`pb-1 text-sm font-semibold ${delta > 0 ? "text-white" : "text-white/70"}`}>
+          {delta > 0 ? "▲ +" : delta < 0 ? "▼ " : ""}
+          {delta === 0 ? `= ${result.baseScore}` : `${Math.abs(delta).toFixed(2)}`}
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <div className="opacity-80">{tr.t("cityAvg")}</div>
+          <div className="text-base font-semibold">{result.dAvg}</div>
+        </div>
+        <div>
+          <div className="truncate opacity-80">
+            {tr.t("weakest")} · {tr.districtByName(result.weakestDistrict)}
+          </div>
+          <div className="text-base font-semibold">{result.minD}</div>
+        </div>
+        <div>
+          <div className="opacity-80">{tr.t("critical")}</div>
+          <div className="text-base font-semibold">{result.criticalCount}</div>
+        </div>
+      </div>
+    </div>
+  );
+}

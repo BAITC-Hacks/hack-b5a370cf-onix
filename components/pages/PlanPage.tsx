@@ -6,7 +6,7 @@ import { useState } from "react";
 import { DIRECTIONS, DISTRICTS, MEASURES, RULES, type Indicator, type Measure } from "@/lib/data";
 import { getMeasure, validate, type Decision } from "@/lib/engine";
 import { useApp } from "../AppState";
-import { Button, StatusBadge } from "../ui";
+import { Button, PageHeader, ScoreHero, StatusBadge } from "../ui";
 import { EventBar } from "./EventBar";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
@@ -44,11 +44,12 @@ export default function PlanPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader step={1} title={tr.t("planTitle")} sub={tr.t("planSub", { b: result.budget })} />
       <EventBar />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="min-w-0">
-          <div className="mb-4">
-            <h1 className="text-2xl font-bold">{tr.t("catalog")}</h1>
+          <div className="mb-3">
+            <h2 className="text-lg font-semibold">{tr.t("catalog")}</h2>
             <p className="text-sm text-ink-2">{tr.t("catalogHint")}</p>
           </div>
           <div className="space-y-6">
@@ -75,31 +76,7 @@ export default function PlanPage() {
 
         <aside className="min-w-0">
           <div className="space-y-4 lg:sticky lg:top-20">
-            <div className="rounded-2xl bg-accent p-5 text-white">
-              <div className="text-sm opacity-85">Astana {tr.t("score")}</div>
-              <div className="mt-1 flex items-end gap-3">
-                <span className="text-5xl font-bold leading-none">{result.score.toFixed(2)}</span>
-                <span className="pb-1 text-sm font-medium">
-                  {fmt(result.delta)} {tr.t("toStart")} {result.baseScore}
-                </span>
-              </div>
-              <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <div className="opacity-80">{tr.t("cityAvg")}</div>
-                  <div className="text-base font-semibold">{result.dAvg}</div>
-                </div>
-                <div>
-                  <div className="opacity-80">
-                    {tr.t("weakest")} · {tr.districtByName(result.weakestDistrict)}
-                  </div>
-                  <div className="text-base font-semibold">{result.minD}</div>
-                </div>
-                <div>
-                  <div className="opacity-80">{tr.t("critical")}</div>
-                  <div className="text-base font-semibold">{result.criticalCount}</div>
-                </div>
-              </div>
-            </div>
+            <ScoreHero compact />
 
             <div className="rounded-2xl border border-line bg-card p-4">
               <div className="flex items-baseline justify-between text-sm">

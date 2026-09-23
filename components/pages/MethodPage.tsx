@@ -2,14 +2,17 @@
 
 import { CONFLICTS, INDICATOR_INFO, INDICATORS, RULES, SYNERGIES } from "@/lib/data";
 import { useApp } from "../AppState";
-import { Card, CardTitle } from "../ui";
+import { Card, CardTitle, PageHeader } from "../ui";
 
 export default function MethodPage() {
   const { tr, result } = useApp();
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <div className="lg:col-span-2">
+        <PageHeader title={tr.t("methodTitle")} sub={tr.t("methodSub")} />
+      </div>
       <Card className="lg:col-span-2">
-        <CardTitle hint={tr.t("methodHint")}>{tr.t("methodTitle")}</CardTitle>
+        <p className="mb-3 text-sm text-ink-2">{tr.t("methodHint")}</p>
         <ol className="list-decimal space-y-2 pl-5 text-sm">
           <li>
             <code className="rounded bg-card-2 px-1">{tr.t("m1")}</code>

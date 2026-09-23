@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { LeaderboardEntry } from "@/lib/leaderboard";
 import { encodePlan } from "@/lib/plan-url";
 import { useApp } from "../AppState";
-import { Button, Card, CardTitle, StatusBadge } from "../ui";
+import { Button, Card, CardTitle, PageHeader, StatusBadge } from "../ui";
 
 const TEAM_KEY = "akim.team";
 
@@ -62,9 +62,9 @@ export default function LeaderboardPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader step={4} title={tr.t("lbTitle")} sub={tr.t("lbHint")} />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
-          <CardTitle hint={tr.t("lbHint")}>{tr.t("lbTitle")}</CardTitle>
           {!entries ? (
             <div className="h-24 animate-pulse rounded-xl bg-card-2" />
           ) : entries.length === 0 ? (

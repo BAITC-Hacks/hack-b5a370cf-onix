@@ -28,7 +28,15 @@ export default function Landing() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">{tr.t("kicker")}</p>
           <h1 className="mt-3 text-4xl font-bold leading-tight sm:text-5xl">{tr.t("heroTitle")}</h1>
           <p className="mt-4 max-w-xl text-lg text-ink-2">{tr.t("heroText")}</p>
-          <ol className="mt-6 grid gap-3 sm:grid-cols-3">
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Link href="/plan" className="rounded-xl bg-accent px-5 py-2.5 text-base font-semibold text-white hover:bg-accent-strong">
+              {decisions.length ? tr.t("ctaContinue") : tr.t("ctaPlan")} →
+            </Link>
+            <Link href="/plan" onClick={() => setDecisions(TZ_EXAMPLE)} className="rounded-xl border border-line bg-card px-5 py-2.5 text-base font-medium hover:bg-card-2">
+              {tr.t("ctaExample")}
+            </Link>
+          </div>
+          <ol className="mt-8 grid gap-3 sm:grid-cols-3">
             {(
               [
                 ["step1", "step1d"],
@@ -36,28 +44,20 @@ export default function Landing() {
                 ["step3", "step3d"],
               ] as const
             ).map(([a, b], i) => (
-              <li key={a} className="rounded-xl border border-line bg-card p-3">
-                <div className="text-xs font-semibold text-accent">
-                  {tr.t("step")} {i + 1}
+              <li key={a} className="flex gap-3 rounded-xl border border-line bg-card p-3">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-accent-soft text-sm font-bold text-accent-strong">{i + 1}</span>
+                <div>
+                  <div className="font-semibold leading-tight">{tr.t(a)}</div>
+                  <div className="text-xs text-ink-2">{tr.t(b)}</div>
                 </div>
-                <div className="font-medium">{tr.t(a)}</div>
-                <div className="text-xs text-ink-2">{tr.t(b)}</div>
               </li>
             ))}
           </ol>
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Link href="/plan" className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-strong">
-              {decisions.length ? tr.t("ctaContinue") : tr.t("ctaPlan")}
-            </Link>
-            <Link href="/plan" onClick={() => setDecisions(TZ_EXAMPLE)} className="rounded-lg border border-line bg-card px-4 py-2 text-sm font-medium hover:bg-card-2">
-              {tr.t("ctaExample")}
-            </Link>
-          </div>
         </div>
 
         <div className="rounded-2xl border border-line bg-card p-5">
           <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="font-semibold">{tr.t("cityToday")}</h2>
+            <h2 className="text-lg font-semibold">{tr.t("cityToday")}</h2>
             <span className="text-xs text-ink-3">{tr.t("cityTodayHint")}</span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -101,7 +101,7 @@ export default function Landing() {
       </section>
 
       <section>
-        <h2 className="mb-4 text-2xl font-bold">{tr.t("features")}</h2>
+        <h2 className="mb-3 text-lg font-semibold">{tr.t("features")}</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
@@ -111,10 +111,12 @@ export default function Landing() {
               ["f4", "f4d", "/plan", "⚠"],
             ] as const
           ).map(([a, b, href, icon]) => (
-            <Link key={a} href={href} className="group rounded-2xl border border-line bg-card p-4 transition hover:border-accent">
-              <div className="grid size-9 place-items-center rounded-lg bg-accent-soft text-lg text-accent-strong">{icon}</div>
-              <div className="mt-3 font-semibold group-hover:text-accent-strong">{tr.t(a)}</div>
-              <p className="mt-1 text-sm text-ink-2">{tr.t(b)}</p>
+            <Link key={a} href={href} className="group flex items-center gap-3 rounded-2xl border border-line bg-card p-4 transition hover:border-accent">
+              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent-soft text-lg text-accent-strong">{icon}</div>
+              <div className="min-w-0">
+                <div className="font-semibold group-hover:text-accent-strong">{tr.t(a)}</div>
+                <p className="text-xs text-ink-2">{tr.t(b)}</p>
+              </div>
             </Link>
           ))}
         </div>
