@@ -2,6 +2,8 @@
 
 HackAlem AI 2026 · Спец-трек Astana Innovations · команда **Onix**
 
+**Команда:** Amir Kapasov, Abraimov Yeskendir
+
 **Живая версия:** https://hack-b5a370cf-onix.vercel.app · Сценарий демо и ответы на вопросы жюри: [docs/DEMO.md](docs/DEMO.md) · Полный контекст проекта для разработчиков: [docs/HANDOFF.md](docs/HANDOFF.md)
 
 ---
