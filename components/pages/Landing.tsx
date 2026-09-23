@@ -4,7 +4,7 @@ import Link from "next/link";
 import { INDICATOR_INFO, RULES } from "@/lib/data";
 import type { Decision } from "@/lib/engine";
 import { useApp } from "../AppState";
-import { CityMap3D } from "../CityMap3D";
+import { CityMap } from "../CityMap";
 import { StatusBadge } from "../ui";
 
 export const TZ_EXAMPLE: Decision[] = [
@@ -97,7 +97,7 @@ export default function Landing() {
             {tr.t("ctaPlan")} →
           </Link>
         </div>
-        <CityMap3D districts={result.districts} weakest={result.weakestDistrict} />
+        <CityMap districts={result.districts} weakest={result.weakestDistrict} />
       </section>
 
       <section>
