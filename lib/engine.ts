@@ -272,34 +272,69 @@ export interface RankedPlan {
 
 const optimumCache = new Map<string, RankedPlan[]>();
 
-/** Полный перебор всех допустимых наборов (~700 тыс.) — находит глобальный оптимум по правилам ТЗ. */
-export function optimize(top = 5, eventId?: string | null): RankedPlan[] {
+export interface PlanConstraints {
+  /** Меры, которые обязательно должны быть в плане (id), опционально с районом. */
+  mustInclude?: Decision[];
+  /** Меры, которые нельзя использовать. */
+  exclude?: string[];
+  /** Районы, в которые нельзя ставить районные меры. */
+  excludeDistricts?: string[];
+  /** Дополнительный потолок бюджета (не выше бюджета правил). */
+  maxCost?: number;
+  /** Что максимизировать: итоговый Score (по умолчанию) или балл конкретного района. */
+  objective?: "score" | string;
+}
+
+export interface ConstrainedPlan extends RankedPlan {
+  objectiveValue: number;
+}
+
+/**
+ * Перебор всех допустимых наборов (~700 тыс. без ограничений) с учётом события и ограничений.
+ * Без ограничений результат кэшируется — это глобальный оптимум по правилам ТЗ.
+ */
+export function optimize(top = 5, eventId?: string | null, constraints: PlanConstraints = {}): ConstrainedPlan[] {
+  const constrained = Object.values(constraints).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== "score"));
   const key = eventId ?? "";
-  const cached = optimumCache.get(key);
-  if (cached) return cached.slice(0, top);
-  const budget = budgetFor(eventId);
-  const best: RankedPlan[] = [];
-  const keep = 20;
-  const ids = MEASURES.map((m) => m.id);
+  const cached = !constrained && optimumCache.get(key);
+  if (cached) return cached.slice(0, top) as ConstrainedPlan[];
 
-  const combos = (start: number, acc: string[]): string[][] => {
-    if (acc.length === RULES.decisions) return [acc];
-    const out: string[][] = [];
-    for (let i = start; i < ids.length; i++) out.push(...combos(i + 1, [...acc, ids[i]]));
-    return out;
+  const budget = Math.min(budgetFor(eventId), constraints.maxCost ?? Infinity);
+  const exclude = new Set(constraints.exclude ?? []);
+  const excludeDistricts = new Set(constraints.excludeDistricts ?? []);
+  const must = constraints.mustInclude ?? [];
+  const objective = constraints.objective && constraints.objective !== "score" ? constraints.objective : null;
+  const keep = Math.max(20, top);
+  const best: ConstrainedPlan[] = [];
+  const ids = MEASURES.map((m) => m.id).filter((id) => !exclude.has(id));
+
+  const combos: string[][] = [];
+  const walk = (start: number, acc: string[]) => {
+    if (acc.length === RULES.decisions) return void combos.push(acc);
+    for (let i = start; i < ids.length; i++) walk(i + 1, [...acc, ids[i]]);
   };
+  walk(0, []);
 
-  for (const combo of combos(0, [])) {
+  for (const combo of combos) {
+    if (!must.every((m) => combo.includes(m.measureId))) continue;
     const ms = combo.map((id) => measureById.get(id)!);
-    if (ms.reduce((s, m) => s + m.cost, 0) > budget) continue;
-    const options = ms.map((m) => (m.scope === "city" ? [null] : DISTRICTS.map((d) => d.id)));
+    const cost = ms.reduce((s, m) => s + m.cost, 0);
+    if (cost > budget) continue;
+    const options = ms.map((m) => {
+      if (m.scope === "city") return [null];
+      const fixed = must.find((x) => x.measureId === m.id)?.districtId;
+      if (fixed) return [fixed];
+      return DISTRICTS.map((d) => d.id).filter((id) => !excludeDistricts.has(id));
+    });
     const place = (i: number, acc: Decision[]) => {
       if (i === ms.length) {
         if (!validate(acc, eventId).ok) return;
-        const score = scoreOnly(acc, eventId);
-        if (best.length < keep || score > best[best.length - 1].score) {
-          best.push({ decisions: acc, score, cost: ms.reduce((s, m) => s + m.cost, 0) });
-          best.sort((a, b) => b.score - a.score);
+        const r = compute(acc, eventId);
+        const value = objective ? r.districts.find((d) => d.id === objective)?.scoreAfter ?? r.score : r.score;
+        const worst = best[best.length - 1];
+        if (best.length < keep || value > worst.objectiveValue || (value === worst.objectiveValue && r.score > worst.score)) {
+          best.push({ decisions: acc, score: r.score, cost, objectiveValue: value });
+          best.sort((a, b) => b.objectiveValue - a.objectiveValue || b.score - a.score);
           if (best.length > keep) best.pop();
         }
         return;
@@ -309,8 +344,8 @@ export function optimize(top = 5, eventId?: string | null): RankedPlan[] {
     place(0, []);
   }
 
-  const ranked = best.map((p) => ({ ...p, score: round(p.score) }));
-  optimumCache.set(key, ranked);
+  const ranked = best.map((p) => ({ ...p, score: round(p.score), objectiveValue: round(p.objectiveValue) }));
+  if (!constrained) optimumCache.set(key, ranked);
   return ranked.slice(0, top);
 }
 

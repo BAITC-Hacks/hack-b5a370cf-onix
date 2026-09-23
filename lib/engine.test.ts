@@ -79,3 +79,16 @@ test("городские события: удар по показателям и
   assert.ok(validate(example, "transfer").errors.some((e) => e.includes("из 85")));
   assert.ok(validate(example).ok);
 });
+
+test("оптимизатор с ограничениями: обязательная мера, исключения, цель по району", () => {
+  const [withoutM3] = optimize(1, null, { exclude: ["M3"] });
+  assert.ok(!withoutM3.decisions.some((d) => d.measureId === "M3"));
+  const [withM13] = optimize(1, null, { mustInclude: [{ measureId: "M13", districtId: "almaty" }] });
+  assert.ok(withM13.decisions.some((d) => d.measureId === "M13" && d.districtId === "almaty"));
+  const [cheap] = optimize(1, null, { maxCost: 70 });
+  assert.ok(cheap.cost <= 70);
+  const [esil] = optimize(1, null, { objective: "esil" });
+  const esilScore = simulate(esil.decisions).districts.find((d) => d.id === "esil")!.scoreAfter;
+  assert.equal(esil.objectiveValue, esilScore);
+  assert.ok(esilScore > 65);
+});

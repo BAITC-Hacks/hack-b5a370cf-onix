@@ -179,13 +179,9 @@ function parseLLM(text: string): Omit<Explanation, "source"> {
 }
 
 /** Находит в тексте LLM числа, которых нет в фактах (защита от «придуманных» цифр). */
-function findUnverifiedNumbers(e: Omit<Explanation, "source">, facts: unknown): string[] {
+export function findUnverifiedNumbersInText(text: string, facts: unknown): string[] {
   const allowed = new Set<string>();
-  const factText = JSON.stringify(facts);
-  for (const n of factText.match(/-?\d+(?:\.\d+)?/g) ?? []) {
-    allowed.add(String(Math.abs(Number(n))));
-  }
-  const text = [e.summary, ...e.strengths, ...e.risks, ...e.tradeoffs, ...e.recommendations].join(" ");
+  for (const n of JSON.stringify(facts).match(/-?\d+(?:\.\d+)?/g) ?? []) allowed.add(String(Math.abs(Number(n))));
   const suspicious = new Set<string>();
   for (const raw of text.match(/\d+(?:[.,]\d+)?/g) ?? []) {
     const n = Number(raw.replace(",", "."));
@@ -193,6 +189,10 @@ function findUnverifiedNumbers(e: Omit<Explanation, "source">, facts: unknown): 
     if (!allowed.has(String(n))) suspicious.add(raw);
   }
   return [...suspicious];
+}
+
+function findUnverifiedNumbers(e: Omit<Explanation, "source">, facts: unknown): string[] {
+  return findUnverifiedNumbersInText([e.summary, ...e.strengths, ...e.risks, ...e.tradeoffs, ...e.recommendations].join(" "), facts);
 }
 
 export async function explain(decisions: Decision[], eventId: string | null = null): Promise<Explanation> {
