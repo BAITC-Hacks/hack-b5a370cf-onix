@@ -5,6 +5,7 @@ import { CONFLICTS, DIRECTION_LABELS, DIRECTIONS, DISTRICTS, EVENTS, INDICATOR_I
 import { contributions, districtName, getEvent, getMeasure, simulate, validate, type Decision, type RankedPlan } from "@/lib/engine";
 import type { Explanation } from "@/lib/explain";
 import { decodePlan, encodePlan } from "@/lib/plan-url";
+import { Advisor } from "./Advisor";
 import { ContributionChart, DistrictDumbbell } from "./charts";
 import { ExplanationView } from "./ExplanationView";
 import { Heatmap } from "./Heatmap";
@@ -151,6 +152,7 @@ export default function Simulator() {
               ["plan", "План"],
               ["results", "Результаты"],
               ["ai", "AI-анализ"],
+              ["advisor", "AI-советник"],
               ["method", "Как считается"],
             ].map(([id, label]) => (
               <button key={id} onClick={() => scrollTo(id)} className="rounded-md px-2.5 py-1 hover:bg-card-2 hover:text-ink">
@@ -474,6 +476,13 @@ export default function Simulator() {
           {explaining && !explanation && <div className="h-24 animate-pulse rounded-xl bg-card-2" />}
           {explainError && <StatusBadge kind="crit">{explainError}</StatusBadge>}
           {explanation && <ExplanationView e={explanation} />}
+        </Card>
+
+        <Card id="advisor" className="scroll-mt-20">
+          <CardTitle hint="Агент с инструментами: сам запускает симуляции и перебор планов с вашими ограничениями, показывает каждый шаг и предлагает план, который применяется одной кнопкой.">
+            AI-советник акима
+          </CardTitle>
+          <Advisor decisions={decisions} eventId={eventId} onApply={(d) => { setDecisions(d); scrollTo("plan"); }} />
         </Card>
 
         <div className="grid gap-6 lg:grid-cols-2">
