@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Тесты движка (формула ТЗ, валидатор, оптимизатор, события, устойчивость)
+        run: npm test
+      - name: Линтер
+        run: npm run lint
+      - name: Production-сборка
+        run: npm run build
+      - name: Проверка типов
+        run: npx tsc --noEmit
