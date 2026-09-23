@@ -23,9 +23,24 @@ export interface Decision {
   districtId?: string | null;
 }
 
+export type IssueCode = "unknown" | "needDistrict" | "badDistrict" | "cityNoDistrict" | "count" | "duplicate" | "budget" | "direction" | "conflict" | "conflictSame";
+
+/** Структурированное нарушение правила — UI переводит его на нужный язык. */
+export interface Issue {
+  code: IssueCode;
+  measureId?: string;
+  otherId?: string;
+  districtId?: string;
+  direction?: Direction;
+  n?: number;
+  limit?: number;
+}
+
 export interface ValidationResult {
   ok: boolean;
+  /** Причины на русском — для API, LLM и тестов. */
   errors: string[];
+  issues: Issue[];
   cost: number;
 }
 
@@ -57,32 +72,37 @@ export function realizedShare(m: Measure): number {
 
 export function validate(decisions: Decision[], eventId?: string | null): ValidationResult {
   const errors: string[] = [];
+  const issues: Issue[] = [];
+  const fail = (issue: Issue, text: string) => {
+    issues.push(issue);
+    errors.push(text);
+  };
   let cost = 0;
 
   for (const d of decisions) {
     const m = measureById.get(d.measureId);
     if (!m) {
-      errors.push(`Неизвестное мероприятие ${d.measureId}.`);
+      fail({ code: "unknown", measureId: d.measureId }, `Неизвестное мероприятие ${d.measureId}.`);
       continue;
     }
     cost += m.cost;
-    if (m.scope === "district" && !d.districtId) errors.push(`${m.id} «${m.name}»: нужно выбрать район.`);
+    if (m.scope === "district" && !d.districtId) fail({ code: "needDistrict", measureId: m.id }, `${m.id} «${m.name}»: нужно выбрать район.`);
     if (m.scope === "district" && d.districtId && !districtById.has(d.districtId))
-      errors.push(`${m.id}: неизвестный район ${d.districtId}.`);
-    if (m.scope === "city" && d.districtId) errors.push(`${m.id} — городская мера, район не указывается.`);
+      fail({ code: "badDistrict", measureId: m.id, districtId: d.districtId }, `${m.id}: неизвестный район ${d.districtId}.`);
+    if (m.scope === "city" && d.districtId) fail({ code: "cityNoDistrict", measureId: m.id }, `${m.id} — городская мера, район не указывается.`);
   }
 
   if (decisions.length !== RULES.decisions)
-    errors.push(`Нужно ровно ${RULES.decisions} решений, выбрано ${decisions.length}.`);
+    fail({ code: "count", n: decisions.length, limit: RULES.decisions }, `Нужно ровно ${RULES.decisions} решений, выбрано ${decisions.length}.`);
 
   const seen = new Set<string>();
   for (const d of decisions) {
-    if (seen.has(d.measureId)) errors.push(`${d.measureId} выбрано повторно — каждое мероприятие максимум один раз.`);
+    if (seen.has(d.measureId)) fail({ code: "duplicate", measureId: d.measureId }, `${d.measureId} выбрано повторно — каждое мероприятие максимум один раз.`);
     seen.add(d.measureId);
   }
 
   const budget = budgetFor(eventId);
-  if (cost > budget) errors.push(`Бюджет превышен: ${cost} из ${budget}.`);
+  if (cost > budget) fail({ code: "budget", n: cost, limit: budget }, `Бюджет превышен: ${cost} из ${budget}.`);
 
   const perDirection = new Map<Direction, number>();
   for (const d of decisions) {
@@ -91,18 +111,24 @@ export function validate(decisions: Decision[], eventId?: string | null): Valida
   }
   for (const [dir, n] of perDirection)
     if (n > RULES.maxPerDirection)
-      errors.push(`Направление «${DIRECTION_LABELS[dir]}»: ${n} меры, допускается не более ${RULES.maxPerDirection}.`);
+      fail(
+        { code: "direction", direction: dir, n, limit: RULES.maxPerDirection },
+        `Направление «${DIRECTION_LABELS[dir]}»: ${n} меры, допускается не более ${RULES.maxPerDirection}.`,
+      );
 
   for (const c of CONFLICTS) {
     const a = decisions.find((d) => d.measureId === c.a);
     const b = decisions.find((d) => d.measureId === c.b);
     if (!a || !b) continue;
-    if (!c.sameDistrictOnly) errors.push(`${c.a} и ${c.b} несовместимы: ${c.reason}.`);
+    if (!c.sameDistrictOnly) fail({ code: "conflict", measureId: c.a, otherId: c.b }, `${c.a} и ${c.b} несовместимы: ${c.reason}.`);
     else if (a.districtId && a.districtId === b.districtId)
-      errors.push(`${c.a} и ${c.b} в районе ${districtName(a.districtId)}: ${c.reason}.`);
+      fail(
+        { code: "conflictSame", measureId: c.a, otherId: c.b, districtId: a.districtId },
+        `${c.a} и ${c.b} в районе ${districtName(a.districtId)}: ${c.reason}.`,
+      );
   }
 
-  return { ok: errors.length === 0, errors, cost };
+  return { ok: errors.length === 0, errors, issues, cost };
 }
 
 export interface DistrictResult {

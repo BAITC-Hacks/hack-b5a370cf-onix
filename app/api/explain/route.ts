@@ -8,5 +8,5 @@ export async function POST(request: Request) {
   const eventId: string | null = typeof body?.eventId === "string" ? body.eventId : null;
   const v = validate(decisions, eventId);
   if (!v.ok) return Response.json({ error: "Набор невалиден", reasons: v.errors }, { status: 400 });
-  return Response.json(await explain(decisions, eventId));
+  return Response.json(await explain(decisions, eventId, body?.lang === "kz" ? "kz" : "ru"));
 }

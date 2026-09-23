@@ -11,5 +11,5 @@ export async function POST(request: Request) {
   if (!history.length || history[history.length - 1].role !== "user") return Response.json({ error: "Нужен вопрос пользователя" }, { status: 400 });
   const current: Decision[] = Array.isArray(body?.decisions) ? body.decisions.slice(0, 5) : [];
   const eventId: string | null = typeof body?.eventId === "string" ? body.eventId : null;
-  return Response.json(await runAgent(history, current, eventId));
+  return Response.json(await runAgent(history, current, eventId, body?.lang === "kz" ? "kz" : "ru"));
 }

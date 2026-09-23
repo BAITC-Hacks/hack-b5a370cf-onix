@@ -195,10 +195,11 @@ function findUnverifiedNumbers(e: Omit<Explanation, "source">, facts: unknown): 
   return findUnverifiedNumbersInText([e.summary, ...e.strengths, ...e.risks, ...e.tradeoffs, ...e.recommendations].join(" "), facts);
 }
 
-export async function explain(decisions: Decision[], eventId: string | null = null): Promise<Explanation> {
+export async function explain(decisions: Decision[], eventId: string | null = null, lang: "ru" | "kz" = "ru"): Promise<Explanation> {
   const ctx = buildContext(decisions, eventId);
   const facts = factsForLLM(ctx);
-  const prompt = `Результаты расчёта сценария:\n${JSON.stringify(facts, null, 1)}`;
+  const langRule = lang === "kz" ? "\n\nВАЖНО: весь ответ (все значения JSON) напиши на казахском языке (қазақ тілі), названия районов по-казахски: Есіл, Алматы, Сарыарқа, Байқоңыр, Нұра." : "";
+  const prompt = `Результаты расчёта сценария:\n${JSON.stringify(facts, null, 1)}${langRule}`;
 
   const provider = process.env.ANTHROPIC_API_KEY ? "anthropic" : process.env.OPENAI_API_KEY ? "openai" : null;
   if (!provider) return fallbackExplanation(ctx);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useApp } from "./AppState";
 
 export function Card({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
   return (
@@ -77,6 +78,7 @@ export function StatusBadge({ kind, children }: { kind: "good" | "warn" | "crit"
 const THEME_KEY = "akim.theme";
 
 export function ThemeToggle() {
+  const { tr } = useApp();
   const [theme, setTheme] = useState<"light" | "dark" | null>(null);
 
   useEffect(() => {
@@ -102,7 +104,7 @@ export function ThemeToggle() {
 
   return (
     <button onClick={toggle} className="rounded-lg border border-line px-2.5 py-1.5 text-sm text-ink-2 hover:bg-card-2" aria-label="Переключить тему">
-      {theme === "dark" ? "☀︎ Светлая" : "☾ Тёмная"}
+      {theme === "dark" ? tr.t("themeLight") : tr.t("themeDark")}
     </button>
   );
 }

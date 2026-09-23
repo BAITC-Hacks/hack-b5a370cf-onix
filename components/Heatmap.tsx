@@ -1,5 +1,8 @@
-import { INDICATOR_INFO, INDICATORS, RULES } from "@/lib/data";
+"use client";
+
+import { INDICATORS, RULES } from "@/lib/data";
 import type { DistrictResult } from "@/lib/engine";
+import { useApp } from "./AppState";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
 
@@ -14,16 +17,17 @@ function cell(v: number) {
 }
 
 export function Heatmap({ districts }: { districts: DistrictResult[] }) {
+  const { tr } = useApp();
   return (
     <div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-separate border-spacing-[3px] text-center text-xs">
-          <caption className="sr-only">Показатели районов после мер, в скобках изменение</caption>
+          <caption className="sr-only">{tr.t("heatTitle")}</caption>
           <thead>
             <tr className="text-ink-3">
-              <th className="text-left font-medium">Район</th>
+              <th className="text-left font-medium">{tr.lang === "kz" ? "Аудан" : "Район"}</th>
               {INDICATORS.map((k) => (
-                <th key={k} className="font-medium" title={INDICATOR_INFO[k].name}>
+                <th key={k} className="font-medium" title={tr.indicator(k)}>
                   {k}
                 </th>
               ))}
@@ -32,12 +36,12 @@ export function Heatmap({ districts }: { districts: DistrictResult[] }) {
           <tbody>
             {districts.map((d) => (
               <tr key={d.id}>
-                <td className="pr-2 text-left text-sm font-medium">{d.name}</td>
+                <td className="pr-2 text-left text-sm font-medium">{tr.district(d.id)}</td>
                 {INDICATORS.map((k) => {
                   const delta = Math.round((d.after[k] - d.before[k]) * 100) / 100;
                   const v = d.after[k];
                   return (
-                    <td key={k} className={`rounded-md px-1 py-1.5 ${cell(v)}`} title={`${d.name} · ${INDICATOR_INFO[k].name}: ${d.before[k]} → ${v}`}>
+                    <td key={k} className={`rounded-md px-1 py-1.5 ${cell(v)}`} title={`${tr.district(d.id)} · ${tr.indicator(k)}: ${d.before[k]} → ${v}`}>
                       <div className="font-semibold">
                         {v < RULES.criticalThreshold && <span aria-label="критично">! </span>}
                         {Math.round(v * 10) / 10}
@@ -56,9 +60,9 @@ export function Heatmap({ districts }: { districts: DistrictResult[] }) {
           <span className="inline-block h-2.5 w-10 rounded-sm bg-gradient-to-r from-[var(--seq-1)] to-[var(--seq-5)]" /> 40 → 80+
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block size-2.5 rounded-sm bg-crit-soft ring-1 ring-crit/60" /> ! ниже 40: штраф −1 к Score
+          <span className="inline-block size-2.5 rounded-sm bg-crit-soft ring-1 ring-crit/60" /> {tr.t("heatCrit")}
         </span>
-        <span>{INDICATORS.map((k) => `${k} ${INDICATOR_INFO[k].name.toLowerCase()}`).join(" · ")}</span>
+        <span>{INDICATORS.map((k) => `${k} ${tr.indicator(k).toLowerCase()}`).join(" · ")}</span>
       </div>
     </div>
   );

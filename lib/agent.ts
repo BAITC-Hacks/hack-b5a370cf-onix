@@ -147,7 +147,7 @@ async function chat(messages: unknown[], signal: AbortSignal) {
 
 export const agentAvailable = () => Boolean(process.env.OPENAI_API_KEY);
 
-export async function runAgent(history: AgentMessage[], current: Decision[], eventId: string | null): Promise<AgentReply> {
+export async function runAgent(history: AgentMessage[], current: Decision[], eventId: string | null, lang: "ru" | "kz" = "ru"): Promise<AgentReply> {
   if (!agentAvailable()) {
     return {
       reply: "AI-советнику нужен LLM: добавьте OPENAI_API_KEY в .env.local. Остальные функции симулятора (расчёт, оптимум, шаблонный анализ) работают без ключа.",
@@ -156,7 +156,8 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
     };
   }
 
-  const messages: unknown[] = [{ role: "system", content: systemPrompt(current, eventId) }, ...history.slice(-8)];
+  const langRule = lang === "kz" ? "\n\nВАЖНО: отвечай пользователю на казахском языке (қазақ тілі); районы: Есіл, Алматы, Сарыарқа, Байқоңыр, Нұра." : "";
+  const messages: unknown[] = [{ role: "system", content: systemPrompt(current, eventId) + langRule }, ...history.slice(-8)];
   const steps: AgentStep[] = [];
   const toolOutputs: unknown[] = [history, current.length ? simulateTool(current, eventId) : null];
   let proposal: AgentReply["proposal"];

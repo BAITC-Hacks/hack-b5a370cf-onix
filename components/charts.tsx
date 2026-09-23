@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import type { Contribution, DistrictResult } from "@/lib/engine";
+import { useApp } from "./AppState";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
 
@@ -29,6 +30,7 @@ function useTooltip() {
 
 /** Вклад каждой меры в Score (leave-one-out): горизонтальные бары от нулевой линии. */
 export function ContributionChart({ items }: { items: Contribution[] }) {
+  const { tr } = useApp();
   const { bind, node } = useTooltip();
   const sorted = [...items].sort((a, b) => b.marginalScore - a.marginalScore);
   const max = Math.max(0.5, ...sorted.map((c) => Math.abs(c.marginalScore)));
@@ -43,8 +45,8 @@ export function ContributionChart({ items }: { items: Contribution[] }) {
           const neg = c.marginalScore < 0;
           return (
             <div key={c.measureId} className="grid grid-cols-[7.5rem_1fr_3.5rem] items-center gap-3 text-sm" {...bind(<ContributionTip c={c} />)}>
-              <div className="truncate text-ink-2" title={`${c.measureId} ${c.name}`}>
-                <b className="text-ink">{c.measureId}</b> · {c.district}
+              <div className="truncate text-ink-2" title={`${c.measureId} ${tr.measure(c.measureId)}`}>
+                <b className="text-ink">{c.measureId}</b> · {tr.districtByName(c.district)}
               </div>
               <div className="relative h-6">
                 {hasNeg && <div className="absolute inset-y-0 w-px bg-line" style={{ left: `${zero}%` }} />}
@@ -58,20 +60,21 @@ export function ContributionChart({ items }: { items: Contribution[] }) {
           );
         })}
       </div>
-      <p className="mt-3 text-xs text-ink-3">Насколько упадёт Score, если убрать меру при прочих равных. Наведите на строку, чтобы увидеть детали.</p>
+      <p className="mt-3 text-xs text-ink-3">{tr.t("contribHint")}</p>
       {node}
     </div>
   );
 }
 
 function ContributionTip({ c }: { c: Contribution }) {
+  const { tr } = useApp();
   return (
     <div className="space-y-1">
       <div className="font-semibold">
-        {c.measureId} «{c.name}»
+        {c.measureId} «{tr.measure(c.measureId)}»
       </div>
       <div className="text-ink-2">
-        {c.district} · стоимость {c.cost} · лаг {c.lag} кв. → срабатывает {Math.round(c.realizedShare * 100)}%
+        {tr.districtByName(c.district)} · {tr.t("cost")} {c.cost} · {tr.t("lag")} {c.lag} → {Math.round(c.realizedShare * 100)}%
       </div>
       <div>
         {c.deltas.map((d) => (
@@ -81,7 +84,7 @@ function ContributionTip({ c }: { c: Contribution }) {
         ))}
       </div>
       <div>
-        Вклад в Score: <b>{fmt(c.marginalScore)}</b>
+        Score: <b>{fmt(c.marginalScore)}</b>
       </div>
     </div>
   );
@@ -89,6 +92,7 @@ function ContributionTip({ c }: { c: Contribution }) {
 
 /** Балл каждого района до и после мер: «гантели» на общей оси. */
 export function DistrictDumbbell({ districts, weakest }: { districts: DistrictResult[]; weakest: string }) {
+  const { tr } = useApp();
   const { bind, node } = useTooltip();
   const values = districts.flatMap((d) => [d.scoreBefore, d.scoreAfter]);
   const lo = Math.floor(Math.min(...values) / 5) * 5 - 2;
@@ -101,10 +105,10 @@ export function DistrictDumbbell({ districts, weakest }: { districts: DistrictRe
     <div data-chart className="relative">
       <div className="mb-3 flex items-center gap-4 text-xs text-ink-2">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-full bg-[var(--before)]" /> До мер
+          <span className="inline-block size-2.5 rounded-full bg-[var(--before)]" /> {tr.t("before")}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-full bg-accent" /> После мер
+          <span className="inline-block size-2.5 rounded-full bg-accent" /> {tr.t("after")}
         </span>
       </div>
       <div className="relative">
@@ -124,18 +128,20 @@ export function DistrictDumbbell({ districts, weakest }: { districts: DistrictRe
                 className="grid grid-cols-[7.5rem_1fr_3.5rem] items-center text-sm"
                 {...bind(
                   <div>
-                    <div className="font-semibold">{d.name}</div>
-                    <div className="text-ink-2">{Math.round(d.population * 100)}% жителей</div>
-                    <div>
-                      Балл: {d.scoreBefore} → <b>{d.scoreAfter}</b> ({fmt(Math.round(up * 100) / 100)})
+                    <div className="font-semibold">{tr.district(d.id)}</div>
+                    <div className="text-ink-2">
+                      {Math.round(d.population * 100)}% {tr.t("residents")}
                     </div>
-                    {d.name === weakest && <div className="mt-1">Самый слабый район — определяет 30% Score</div>}
+                    <div>
+                      {d.scoreBefore} → <b>{d.scoreAfter}</b> ({fmt(Math.round(up * 100) / 100)})
+                    </div>
+                    {d.name === weakest && <div className="mt-1">{tr.t("weakestTag")} · 30% Score</div>}
                   </div>,
                 )}
               >
                 <div className="truncate pr-3">
-                  <span className="font-medium">{d.name}</span>
-                  {d.name === weakest && <span className="ml-1.5 rounded bg-warn-soft px-1 text-[10px] font-semibold text-ink">слабейший</span>}
+                  <span className="font-medium">{tr.district(d.id)}</span>
+                  {d.name === weakest && <span className="ml-1.5 rounded bg-warn-soft px-1 text-[10px] font-semibold text-ink">{tr.t("weakestTag")}</span>}
                 </div>
                 <div className="relative h-8">
                   <div className="absolute top-1/2 h-0.5 -translate-y-1/2 bg-accent/40" style={{ left: `${Math.min(a, b)}%`, width: `${Math.abs(b - a)}%` }} />
