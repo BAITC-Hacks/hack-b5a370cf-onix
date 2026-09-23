@@ -18,7 +18,7 @@ export function ExplanationView({ e }: { e: Explanation }) {
     <div className="space-y-4 text-sm">
       <div className="flex flex-wrap gap-2">
         <StatusBadge kind="info">{e.source === "fallback" ? tr.t("srcFallback") : `LLM · ${e.model}`}</StatusBadge>
-        {e.error && <StatusBadge kind="warn">{tr.t("llmDown")}</StatusBadge>}
+        {e.error && <StatusBadge kind="warn">{e.error === "llm_unverified" ? tr.t("llmUnverified") : tr.t("llmDown")}</StatusBadge>}
         {unverifiedNumbers.length > 0 && <StatusBadge kind="crit">{tr.t("notFromCalc")}: {unverifiedNumbers.join(", ")}</StatusBadge>}
         {unverifiedClaims.length > 0 && <StatusBadge kind="crit">{tr.t("notFromCalcClaims")}: {unverifiedClaims.join("; ")}</StatusBadge>}
         {e.source !== "fallback" && e.unverifiedNumbers && e.unverifiedClaims && unverifiedNumbers.length === 0 && unverifiedClaims.length === 0 && <StatusBadge kind="good">{tr.t("verified")}</StatusBadge>}

@@ -66,7 +66,7 @@ test("синергия с верным бонусом, но неверным п�
   assert.deepEqual(findUnverifiedClaimsInText("M10+M12 даёт бонус к B1, а M12 отдельно ускоряет обращения.", scenarioFacts), []);
 });
 
-test("AI-анализ передаёт разные метрики и подсвечивает смысловые ошибки модели", async () => {
+test("AI-анализ передаёт метрики, скрывает неподтверждённый ответ и принимает проверенный", async () => {
   process.env.LLM_PROVIDER = "openai";
   process.env.OPENAI_API_KEY = "test";
   let prompt = "";
@@ -94,10 +94,29 @@ test("AI-анализ передаёт разные метрики и подсв
   assert.match(prompt, /"разрыв_до_оптимума": 0\.7/);
   assert.match(prompt, /"изменение_балла": 3\.78/);
   assert.match(prompt, /"название_показателя": "Безопасность улиц"/);
-  assert.deepEqual(result.unverifiedNumbers, ["52.56", "56.54"]);
-  assert.deepEqual(result.unverifiedClaims, ["Синергия M10+M12 влияет на B1 «Безопасность улиц»"]);
+  assert.equal(result.source, "fallback");
+  assert.equal(result.error, "llm_unverified");
+  assert.notEqual(result.summary, summary);
+  assert.doesNotMatch(result.summary, /ускоряет реакцию на обращения/);
+  assert.equal(result.unverifiedNumbers, undefined);
+  assert.equal(result.unverifiedClaims, undefined);
+
+  summary = "Score станет 61.7.";
+  const inventedNumber = await explain(plan);
+  assert.equal(inventedNumber.source, "fallback");
+  assert.equal(inventedNumber.error, "llm_unverified");
+  assert.doesNotMatch(inventedNumber.summary, /61\.7/);
+
+  summary = "Синергия M10+M12 ускоряет реакцию на обращения.";
+  const falseClaim = await explain(plan);
+  assert.equal(falseClaim.source, "fallback");
+  assert.equal(falseClaim.error, "llm_unverified");
+  assert.doesNotMatch(falseClaim.summary, /ускоряет реакцию на обращения/);
+
   summary = "Средний балл города вырос с 56.86 до 58.08, прирост 1.22. Балл Нуры вырос с 49.18 до 52.96, прирост 3.78. Разрыв до оптимума составляет 0.7. Синергия мер M10 и M12 улучшает безопасность улиц.";
   const verified = await explain(plan);
+  assert.equal(verified.source, "openai");
+  assert.equal(verified.summary, summary);
   assert.deepEqual(verified.unverifiedNumbers, []);
   assert.deepEqual(verified.unverifiedClaims, []);
 });

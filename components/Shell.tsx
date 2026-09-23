@@ -10,7 +10,7 @@ import { ThemeToggle } from "./ui";
 const ICONS: Record<string, string> = { "/": "⌂", "/plan": "☰", "/results": "◔", "/advisor": "✦", "/leaderboard": "🏆", "/method": "∑" };
 
 export function Shell({ children }: { children: ReactNode }) {
-  const { tr, lang, setLang, result, decisions } = useApp();
+  const { tr, lang, setLang, result, decisions, complete } = useApp();
   const path = usePathname();
   const links: [string, string][] = [
     ["/", tr.t("navHome")],
@@ -41,7 +41,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Link href="/results" className="rounded-lg bg-accent px-2.5 py-1 text-right text-white">
               <div className="text-[10px] leading-none opacity-80">Score</div>
-              <div className="text-sm font-bold leading-tight">{result.score.toFixed(2)}</div>
+              <div className="text-sm font-bold leading-tight">{complete ? result.score.toFixed(2) : "—"}</div>
             </Link>
             <div className="flex rounded-lg border border-line p-0.5 text-xs font-semibold" role="group" aria-label="Язык / Тіл">
               {LANGS.map((l) => (

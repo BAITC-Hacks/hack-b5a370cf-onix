@@ -89,7 +89,7 @@ export function Advisor({ decisions, eventId, onApply }: { decisions: Decision[]
                   {it.reply?.unverifiedNumbers && it.reply.unverifiedNumbers.length > 0 && (
                     <StatusBadge kind="crit">{tr.t("notFromCalc")}: {it.reply.unverifiedNumbers.join(", ")}</StatusBadge>
                   )}
-                  {it.reply?.error && it.reply.error !== "no-key" && <StatusBadge kind="warn">{it.reply.error.slice(0, 80)}</StatusBadge>}
+                  {it.reply?.error && it.reply.error !== "no-key" && <StatusBadge kind="warn">{it.reply.error === "llm_unverified" ? tr.t("llmUnverified") : it.reply.error.slice(0, 80)}</StatusBadge>}
                 </div>
                 {it.reply?.proposal && (
                   <div className="rounded-xl border border-accent bg-card p-3 text-sm">

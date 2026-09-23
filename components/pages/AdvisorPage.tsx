@@ -7,7 +7,7 @@ import { Card, PageHeader } from "../ui";
 import { EventBar } from "./EventBar";
 
 export default function AdvisorPage() {
-  const { tr, decisions, eventId, setDecisions, result } = useApp();
+  const { tr, decisions, eventId, setDecisions, result, complete } = useApp();
   const router = useRouter();
   return (
     <div className="space-y-6">
@@ -18,7 +18,7 @@ export default function AdvisorPage() {
           <span className="font-semibold">{tr.t("currentPlan")}: </span>
           {decisions.length ? (
             <>
-              {decisions.map((d) => `${d.measureId} ${tr.district(d.districtId)}`).join(" · ")} — <b>Score {result.score.toFixed(2)}</b>
+              {decisions.map((d) => `${d.measureId} ${tr.district(d.districtId)}`).join(" · ")} — {complete ? <b>Score {result.score.toFixed(2)}</b> : <span className="text-ink-2">{tr.t("scoreProvisional")}</span>}
             </>
           ) : (
             <span className="text-ink-2">{tr.t("emptyPlan")}</span>

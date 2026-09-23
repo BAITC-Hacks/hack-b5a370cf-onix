@@ -55,6 +55,15 @@ export default function ResultsPage() {
         </div>
       )}
 
+      {!complete && app.decisions.length > 0 && (
+        <div className="rounded-2xl border border-warn bg-warn-soft p-4 text-sm">
+          <p className="font-medium">{tr.t("scoreProvisional")}</p>
+          <ul className="mt-2 space-y-1">
+            {app.validation.issues.map((issue, index) => <li key={index}>• {tr.issue(issue)}</li>)}
+          </ul>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
         <ScoreHero />
         <EventBar />
@@ -70,7 +79,11 @@ export default function ResultsPage() {
             <h3 className="font-semibold">{tr.t("tlTitle")}</h3>
             <p className="text-sm text-ink-2">{tr.t("tlHint")}</p>
           </div>
-          <Timeline points={points} decisions={app.decisions} quarter={quarter} setQuarter={setQuarter} />
+          {complete ? (
+            <Timeline points={points} decisions={app.decisions} quarter={quarter} setQuarter={setQuarter} />
+          ) : (
+            <p className="text-sm text-ink-3">{tr.t("scoreProvisional")}</p>
+          )}
         </div>
       </Card>
 
@@ -106,7 +119,7 @@ export default function ResultsPage() {
           <div>
             <h3 className="mb-1 font-semibold">{tr.t("contribTitle")}</h3>
             <p className="mb-3 text-sm text-ink-2">{tr.t("contribHint")}</p>
-            {contrib.length ? <ContributionChart items={contrib} /> : <p className="text-sm text-ink-3">{tr.t("contribEmpty")}</p>}
+            {complete && contrib.length ? <ContributionChart items={contrib} /> : <p className="text-sm text-ink-3">{complete ? tr.t("contribEmpty") : tr.t("scoreProvisional")}</p>}
           </div>
         </div>
         <div>

@@ -109,8 +109,7 @@ function simulateTool(decisions: Decision[], eventId: string | null) {
     план: planText(decisions),
     валиден_как_итоговый: v.ok,
     нарушения: v.errors,
-    score: r.score,
-    изменение_к_старту: r.delta,
+    ...(v.ok ? { score: r.score, изменение_к_старту: r.delta } : {}),
     стоимость: r.cost,
     бюджет: r.budget,
     слабейший_район: `${r.weakestDistrict} (${r.minD})`,
@@ -176,7 +175,7 @@ function openaiProvider(system: string, history: AgentMessage[]): Provider {
         method: "POST",
         signal,
         headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({ model, temperature: 0.2, messages, tools: TOOLS, tool_choice: "auto" }),
+        body: JSON.stringify({ model, temperature: 0.2, max_completion_tokens: 2000, messages, tools: TOOLS, tool_choice: "auto" }),
       });
       if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const message = (await res.json()).choices[0].message;
@@ -254,6 +253,8 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
     proposal = { decisions: lastFound, score: r.score, cost: r.cost, rationale: "Лучший план, найденный инструментом" };
   };
   const model = `${provider.name} · ${provider.model}`;
+  const maxToolCalls = 8;
+  let toolCalls = 0;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
@@ -263,17 +264,43 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
       if (!calls.length) {
         const reply = text.trim();
         attachFallback();
-        return { reply, steps, proposal, model, unverifiedNumbers: findUnverifiedNumbersInText(reply, toolOutputs) };
+        const unverifiedNumbers = findUnverifiedNumbersInText(reply, toolOutputs);
+        if (unverifiedNumbers.length) {
+          return {
+            reply: lang === "kz"
+              ? "AI жауабындағы сандар есеппен расталмады. Төменде тек қозғалтқыш тексерген жоспар көрсетілген."
+              : "Числа в ответе AI не подтвердились расчётом. Ниже показан только план, проверенный движком.",
+            steps,
+            proposal,
+            model,
+            error: "llm_unverified",
+          };
+        }
+        return { reply, steps, proposal, model, unverifiedNumbers };
       }
       const results: { id: string; output: unknown }[] = [];
       for (const call of calls) {
+        if (toolCalls >= maxToolCalls) {
+          attachFallback();
+          return {
+            reply: proposal
+              ? `Лимит вычислений достигнут. Последний проверенный план: ${planText(proposal.decisions)} → Score ${proposal.score}.`
+              : "Лимит вычислений достигнут. Уточните запрос и попробуйте ещё раз.",
+            steps,
+            proposal,
+            model,
+            error: "tool-limit",
+          };
+        }
+        toolCalls += 1;
         let output: unknown;
         try {
           const args = JSON.parse(call.args || "{}");
           if (call.name === "simulate_plan") {
             const ds = toDecisions(args.decisions);
             output = simulateTool(ds, eventId);
-            steps.push({ tool: "Симуляция", summary: `${planText(ds) || "пустой план"} → Score ${(output as { score: number }).score}` });
+            const score = (output as { score?: number }).score;
+            steps.push({ tool: "Симуляция", summary: `${planText(ds) || "пустой план"} → ${score === undefined ? "итоговый Score не считается" : `Score ${score}`}` });
           } else if (call.name === "find_best_plans") {
             if (args.objective && args.objective !== "score" && !districtIds.includes(args.objective))
               throw new Error(`objective должен быть "score" или id района: ${districtIds.join(", ")}`);

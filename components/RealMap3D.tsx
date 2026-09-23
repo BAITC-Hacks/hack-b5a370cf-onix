@@ -165,8 +165,14 @@ export function RealMap3D({ districts, weakest }: { districts: DistrictResult[];
     const src = { ...dst, ...shown.current };
     const start = performance.now();
     let raf = 0;
+    let lastMapUpdate = 0;
     const tick = (t: number) => {
       const k = Math.min(1, (t - start) / 800);
+      if (k < 1 && t - lastMapUpdate < 32) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      lastMapUpdate = t;
       const e = 1 - Math.pow(1 - k, 3);
       const cur = Object.fromEntries(Object.keys(dst).map((id) => [id, src[id] + (dst[id] - src[id]) * e]));
       shown.current = cur;
@@ -180,10 +186,26 @@ export function RealMap3D({ districts, weakest }: { districts: DistrictResult[];
       if (!el) continue;
       const delta = Math.round((dst[d.id] - before[d.id]) * 10) / 10;
       const crit = metric === "D" && INDICATORS.some((k) => d.after[k] < RULES.criticalThreshold);
-      el.innerHTML = `<div class="akim-map-chip${d.name === weakest && metric === "D" ? " weak" : ""}">
-        <b>${tr.district(d.id)}${crit ? ' <span class="crit">!</span>' : ""}</b>
-        <span>${dst[d.id].toFixed(1)}${delta ? ` <i class="${delta > 0 ? "up" : "down"}">${delta > 0 ? "+" : ""}${delta}</i>` : ""}</span>
-      </div>`;
+      const chip = document.createElement("div");
+      chip.className = `akim-map-chip${d.name === weakest && metric === "D" ? " weak" : ""}`;
+      const name = document.createElement("b");
+      name.textContent = tr.district(d.id);
+      if (crit) {
+        const mark = document.createElement("span");
+        mark.className = "crit";
+        mark.textContent = "!";
+        name.append(" ", mark);
+      }
+      const value = document.createElement("span");
+      value.textContent = dst[d.id].toFixed(1);
+      if (delta) {
+        const change = document.createElement("i");
+        change.className = delta > 0 ? "up" : "down";
+        change.textContent = `${delta > 0 ? "+" : ""}${delta}`;
+        value.append(" ", change);
+      }
+      chip.append(name, value);
+      el.replaceChildren(chip);
     }
     return () => cancelAnimationFrame(raf);
     // districts/tr/weakest входят в targetKey и язык; отдельная зависимость не нужна

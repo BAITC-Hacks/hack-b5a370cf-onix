@@ -172,7 +172,7 @@ export function Details({ title, children, open }: { title: string; children: Re
 
 /** Большой Score с дельтой и тремя цифрами — один и тот же блок на «Плане» и «Результатах». */
 export function ScoreHero({ compact }: { compact?: boolean }) {
-  const { tr, result, decisions } = useApp();
+  const { tr, result, decisions, complete } = useApp();
   const delta = result.delta;
   return (
     <div className={`rounded-2xl bg-accent text-white ${compact ? "p-4" : "p-5"}`}>
@@ -181,12 +181,15 @@ export function ScoreHero({ compact }: { compact?: boolean }) {
         <div className="text-xs opacity-75">{decisions.length ? `${decisions.length}/5` : tr.t("noPlanYet")}</div>
       </div>
       <div className="mt-1 flex items-end gap-3">
-        <span className={`font-bold leading-none ${compact ? "text-4xl" : "text-5xl"}`}>{result.score.toFixed(2)}</span>
-        <span className={`pb-1 text-sm font-semibold ${delta > 0 ? "text-white" : "text-white/70"}`}>
-          {delta > 0 ? "▲ +" : delta < 0 ? "▼ " : ""}
-          {delta === 0 ? `= ${result.baseScore}` : `${Math.abs(delta).toFixed(2)}`}
-        </span>
+        <span className={`font-bold leading-none ${compact ? "text-4xl" : "text-5xl"}`}>{complete ? result.score.toFixed(2) : "—"}</span>
+        {complete && (
+          <span className={`pb-1 text-sm font-semibold ${delta > 0 ? "text-white" : "text-white/70"}`}>
+            {delta > 0 ? "▲ +" : delta < 0 ? "▼ " : ""}
+            {delta === 0 ? `= ${result.baseScore}` : `${Math.abs(delta).toFixed(2)}`}
+          </span>
+        )}
       </div>
+      {!complete && <p className="mt-2 text-xs opacity-85">{tr.t("scoreProvisional")}</p>}
       <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
         <div>
           <div className="opacity-80">{tr.t("cityAvg")}</div>

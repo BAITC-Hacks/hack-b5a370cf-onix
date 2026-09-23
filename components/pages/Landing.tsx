@@ -1,11 +1,44 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import { useEffect, useRef, useState } from "react";
 import { INDICATOR_INFO, RULES } from "@/lib/data";
-import type { Decision } from "@/lib/engine";
+import type { Decision, DistrictResult } from "@/lib/engine";
 import { useApp } from "../AppState";
-import { CityMap } from "../CityMap";
 import { StatusBadge } from "../ui";
+
+const MapPlaceholder = () => <div className="h-[600px] rounded-xl bg-card-2" aria-hidden="true" />;
+const CityMap = dynamic(() => import("../CityMap").then((module) => module.CityMap), {
+  ssr: false,
+  loading: MapPlaceholder,
+});
+
+function NearViewportCityMap({ districts, weakest }: { districts: DistrictResult[]; weakest: string }) {
+  const target = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      const timer = window.setTimeout(() => setMounted(true), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setMounted(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "300px 0px" });
+    if (target.current) observer.observe(target.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={target} className="min-h-[600px]">
+      {mounted ? <CityMap districts={districts} weakest={weakest} /> : <MapPlaceholder />}
+    </div>
+  );
+}
 
 export const TZ_EXAMPLE: Decision[] = [
   { measureId: "M7", districtId: "nura" },
@@ -97,7 +130,7 @@ export default function Landing() {
             {tr.t("ctaPlan")} →
           </Link>
         </div>
-        <CityMap districts={result.districts} weakest={result.weakestDistrict} />
+        <NearViewportCityMap districts={result.districts} weakest={result.weakestDistrict} />
       </section>
 
       <section>

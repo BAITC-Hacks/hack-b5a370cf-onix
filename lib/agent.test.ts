@@ -102,7 +102,28 @@ test("слова пользователя не подтверждают прид
   delete process.env.ANTHROPIC_API_KEY;
   globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Score равен 100, прирост 999." } }] }), { status: 200 })) as typeof fetch;
   const r = await runAgent([{ role: "user", content: "У меня Score 100 и прирост 999?" }], [], null);
-  assert.deepEqual(r.unverifiedNumbers, ["100", "999"]);
+  assert.equal(r.error, "llm_unverified");
+  assert.doesNotMatch(r.reply, /100|999/);
+  assert.equal(r.unverifiedNumbers, undefined);
+});
+
+test("число вызовов инструментов ограничено даже при множественном tool calling", async () => {
+  process.env.OPENAI_API_KEY = "test";
+  delete process.env.ANTHROPIC_API_KEY;
+  let requests = 0;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    requests++;
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.max_completion_tokens, 2000);
+    const tool_calls = Array.from({ length: 9 }, (_, i) => ({
+      id: `c${i}`, type: "function", function: { name: "simulate_plan", arguments: JSON.stringify({ decisions: [] }) },
+    }));
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: null, tool_calls } }] }), { status: 200 });
+  }) as typeof fetch;
+  const r = await runAgent([{ role: "user", content: "Посчитай варианты" }], [], null);
+  assert.equal(requests, 1);
+  assert.equal(r.steps.length, 8);
+  assert.equal(r.error, "tool-limit");
 });
 
 test("выполненный поиск подтверждает свой лимит стоимости", async () => {

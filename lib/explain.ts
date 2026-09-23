@@ -368,7 +368,12 @@ export async function explain(decisions: Decision[], eventId: string | null = nu
   try {
     const { text, model } = provider === "anthropic" ? await callAnthropic(prompt, controller.signal) : await callOpenAI(prompt, controller.signal);
     const parsed = parseLLM(text);
-    return { ...parsed, source: provider, model, unverifiedNumbers: findUnverifiedNumbers(parsed, facts), unverifiedClaims: findUnverifiedClaims(parsed, facts) };
+    const unverifiedNumbers = findUnverifiedNumbers(parsed, facts);
+    const unverifiedClaims = findUnverifiedClaims(parsed, facts);
+    // Неподтверждённый текст модели не отдаём клиенту: по ТЗ числа и выводы должны опираться на расчёт.
+    if (unverifiedNumbers.length || unverifiedClaims.length)
+      return { ...fallbackExplanation(ctx), error: "llm_unverified" };
+    return { ...parsed, source: provider, model, unverifiedNumbers, unverifiedClaims };
   } catch (err) {
     return { ...fallbackExplanation(ctx), error: publicError(err) };
   } finally {

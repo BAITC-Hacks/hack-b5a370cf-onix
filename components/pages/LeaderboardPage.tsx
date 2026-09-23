@@ -1,31 +1,51 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { LeaderboardEntry } from "@/lib/leaderboard";
 import { encodePlan } from "@/lib/plan-url";
 import { useApp } from "../AppState";
 import { Button, Card, CardTitle, PageHeader, StatusBadge } from "../ui";
 
 const TEAM_KEY = "akim.team";
+const OWNER_KEY_PREFIX = "akim.leaderboard.owner.v1.";
+
+function ownerTokenFor(team: string): string {
+  const normalized = team.replace(/\s+/g, " ").trim().slice(0, 40).toLowerCase();
+  const storageKey = `${OWNER_KEY_PREFIX}${encodeURIComponent(normalized)}`;
+  let token = localStorage.getItem(storageKey);
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    // Persist before sending: a lost response must not lose ownership of a saved row.
+    localStorage.setItem(storageKey, token);
+  }
+  return token;
+}
 
 /** Общий рейтинг команд: план отправляется на сервер, Score и худший случай считает движок. */
 export default function LeaderboardPage() {
   const { tr, decisions, eventId, result, complete } = useApp();
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [team, setTeam] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "good" | "crit"; text: string } | null>(null);
   const [origin, setOrigin] = useState("");
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/leaderboard", { cache: "no-store" });
-      setEntries((await res.json()).entries);
+      if (!res.ok) throw new Error("Leaderboard unavailable");
+      const data = await res.json();
+      if (!Array.isArray(data.entries)) throw new Error("Invalid leaderboard response");
+      setEntries(data.entries);
+      setLoadError(false);
     } catch {
-      setEntries([]);
+      setEntries((current) => current ?? []);
+      setLoadError(true);
     }
-  };
+  }, []);
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -35,9 +55,18 @@ export default function LeaderboardPage() {
     setOrigin(location.origin);
     /* eslint-enable react-hooks/set-state-in-effect */
     refresh();
-    const t = setInterval(refresh, 15_000);
-    return () => clearInterval(t);
-  }, []);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, 60_000);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refresh]);
 
   const submit = async () => {
     setBusy(true);
@@ -46,8 +75,20 @@ export default function LeaderboardPage() {
       localStorage.setItem(TEAM_KEY, team);
     } catch {}
     try {
-      const res = await fetch("/api/leaderboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ team, decisions, eventId }) });
+      let ownerToken: string;
+      try {
+        ownerToken = ownerTokenFor(team);
+      } catch {
+        throw new Error(tr.t("lbStorageUnavailable"));
+      }
+      const res = await fetch("/api/leaderboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ team, decisions, eventId, ownerToken }) });
       const data = await res.json();
+      if (res.status === 503) throw new Error(tr.t("lbUnavailable"));
+      if (res.status === 429) throw new Error(tr.t("lbTooMany"));
+      if (data.code === "team_taken") throw new Error(tr.t("lbTeamTaken"));
+      if (data.code === "not_ranked") throw new Error(tr.t("lbNotRanked"));
+      if (data.code === "baseline_only") throw new Error(tr.t("lbBaselineOnly"));
+      if (data.code === "invalid_token") throw new Error(tr.t("lbStorageUnavailable"));
       if (!res.ok) throw new Error((data.errors ?? [data.error]).join(" "));
       setMsg({ kind: "good", text: `${tr.t("lbSent")} #${data.rank}` });
       await refresh();
@@ -65,11 +106,16 @@ export default function LeaderboardPage() {
       <PageHeader step={4} title={tr.t("lbTitle")} sub={tr.t("lbHint")} />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
+          {loadError && (
+            <div className="mb-3">
+              <StatusBadge kind="crit">{tr.t("lbUnavailable")}</StatusBadge>
+            </div>
+          )}
           {!entries ? (
             <div className="h-24 animate-pulse rounded-xl bg-card-2" />
-          ) : entries.length === 0 ? (
+          ) : entries.length === 0 && !loadError ? (
             <p className="text-sm text-ink-3">{tr.t("lbEmpty")}</p>
-          ) : (
+          ) : entries.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
                 <thead className="text-left text-xs text-ink-3">
@@ -109,7 +155,7 @@ export default function LeaderboardPage() {
                 </tbody>
               </table>
             </div>
-          )}
+          ) : null}
           <div className="mt-3 flex items-center gap-3 text-xs text-ink-3">
             <button onClick={refresh} className="underline">
               {tr.t("optRefresh")}
@@ -130,7 +176,7 @@ export default function LeaderboardPage() {
               <>
                 <div>{decisions.map((d) => `${d.measureId} ${tr.district(d.districtId)}`).join(" · ")}</div>
                 <div className="mt-1 font-semibold">
-                  Score {result.score.toFixed(2)} · {tr.t("budget")} {result.cost}
+                  {complete ? `Score ${result.score.toFixed(2)}` : tr.t("scoreProvisional")} · {tr.t("budget")} {result.cost}
                 </div>
               </>
             ) : (
@@ -145,13 +191,14 @@ export default function LeaderboardPage() {
             value={team}
             onChange={(e) => setTeam(e.target.value)}
             maxLength={40}
-            placeholder="Onix"
+            placeholder="Onix Demo"
             className="mt-1 w-full rounded-lg border border-line bg-card px-3 py-2 text-sm outline-none focus:border-accent"
           />
-          <Button variant="primary" onClick={submit} disabled={!complete || busy || team.trim().length < 2} className="mt-3 w-full">
+          <Button variant="primary" onClick={submit} disabled={!complete || eventId !== null || busy || team.trim().length < 2} className="mt-3 w-full">
             {busy ? "…" : tr.t("lbSubmit")}
           </Button>
           {!complete && <p className="mt-2 text-xs text-ink-3">{tr.t("aiNeedPlan")}</p>}
+          {eventId !== null && <p className="mt-2 text-xs text-ink-3">{tr.t("lbBaselineOnly")}</p>}
           {msg && (
             <div className="mt-2">
               <StatusBadge kind={msg.kind}>{msg.text}</StatusBadge>
