@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { RULES } from "@/lib/data";
-import { getMeasure } from "@/lib/engine";
+import { getMeasure, simulate } from "@/lib/engine";
 import { useApp } from "./AppState";
 import { ContributionChart, DistrictDumbbell } from "./charts";
 import { ExplanationView } from "./ExplanationView";
@@ -78,6 +78,12 @@ export default function Report() {
     );
 
   const now = new Date();
+  const siteDecision = decisions.find((d) => d.districtId === "nura" && (d.measureId === "M4" || d.measureId === "M7"));
+  const siteIndicator = siteDecision?.measureId === "M7" ? "S1" as const : "E1" as const;
+  const siteDistrict = result.districts.find((d) => d.id === "nura")!;
+  const siteWithout = siteDecision
+    ? simulate(decisions.filter((d) => d !== siteDecision), app.eventId).districts.find((d) => d.id === "nura")!
+    : null;
   const KZ_MONTHS = ["қаңтар", "ақпан", "наурыз", "сәуір", "мамыр", "маусым", "шілде", "тамыз", "қыркүйек", "қазан", "қараша", "желтоқсан"];
   const date = lang === "kz" ? `${now.getDate()} ${KZ_MONTHS[now.getMonth()]} ${now.getFullYear()} ж.` : now.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
 
@@ -112,6 +118,20 @@ export default function Report() {
         <Kpi label={tr.t("budget")} value={`${result.cost} / ${result.budget}`} />
         <Kpi label={`${tr.t("weakest")} · ${tr.districtByName(result.weakestDistrict)}`} value={result.minD.toFixed(2)} />
       </section>
+
+      {siteDecision && (
+        <section className="break-inside-avoid rounded-xl border border-accent/30 bg-accent-soft/20 px-4 py-3 text-sm">
+          <div className="font-semibold">{tr.t("projectSite")} · {siteDecision.measureId === "M7" ? tr.t("projectSchool") : tr.t("projectPark")}</div>
+          <div className="mt-1 text-ink-2">
+            {tr.t("projectMarginalChange", {
+              name: `${siteIndicator} ${tr.indicator(siteIndicator)}`,
+              before: siteWithout!.after[siteIndicator],
+              after: siteDistrict.after[siteIndicator],
+            })} · {tr.t("projectCostLag", { cost: getMeasure(siteDecision.measureId)!.cost, quarter: getMeasure(siteDecision.measureId)!.lag + 1 })}
+          </div>
+          <p className="mt-1 text-xs text-ink-3">{tr.t("projectSiteDisclaimer")}</p>
+        </section>
+      )}
 
       <section>
         <h2 className="mb-2 text-lg font-semibold">{x.five}</h2>

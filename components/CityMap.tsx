@@ -5,9 +5,10 @@ import type { DistrictResult } from "@/lib/engine";
 import { useApp } from "./AppState";
 import { CityMap3D } from "./CityMap3D";
 import { RealMap3D } from "./RealMap3D";
+import type { MapProject } from "./map-project";
 
 /** Переключатель: реальная карта (MapLibre + OSM) или схема (SVG, без сети). */
-export function CityMap(props: { districts: DistrictResult[]; weakest: string }) {
+export function CityMap(props: { districts: DistrictResult[]; weakest: string; project?: MapProject | null; quarter?: number }) {
   const { tr } = useApp();
   const [mode, setMode] = useState<"real" | "schema">("real");
   const tabs: ["real" | "schema", string][] = [

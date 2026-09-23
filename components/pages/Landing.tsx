@@ -20,6 +20,7 @@ const KEYS = Object.keys(INDICATOR_INFO) as (keyof typeof INDICATOR_INFO)[];
 export default function Landing() {
   const { tr, result, decisions, setDecisions } = useApp();
   const minBefore = Math.min(...result.districts.map((d) => d.scoreBefore));
+  const siteDecision = decisions.find((d) => d.districtId === "nura" && (d.measureId === "M4" || d.measureId === "M7"));
 
   return (
     <div className="space-y-12">
@@ -97,7 +98,12 @@ export default function Landing() {
             {tr.t("ctaPlan")} →
           </Link>
         </div>
-        <CityMap districts={result.districts} weakest={result.weakestDistrict} />
+        <CityMap
+          districts={result.districts}
+          weakest={result.weakestDistrict}
+          project={{ kind: siteDecision ? siteDecision.measureId === "M7" ? "school" : "park" : "site", districtId: "nura" }}
+          quarter={RULES.horizon}
+        />
       </section>
 
       <section>

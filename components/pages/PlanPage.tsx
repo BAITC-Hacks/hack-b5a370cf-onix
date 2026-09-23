@@ -8,6 +8,7 @@ import { getMeasure, validate, type Decision } from "@/lib/engine";
 import { useApp } from "../AppState";
 import { Button, PageHeader, ScoreHero, StatusBadge } from "../ui";
 import { EventBar } from "./EventBar";
+import { ProjectDecision } from "../ProjectDecision";
 
 const fmt = (x: number) => (x > 0 ? `+${x}` : `${x}`);
 
@@ -45,6 +46,7 @@ export default function PlanPage() {
   return (
     <div className="space-y-6">
       <PageHeader step={1} title={tr.t("planTitle")} sub={tr.t("planSub", { b: result.budget })} />
+      <ProjectDecision />
       <EventBar />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="min-w-0">

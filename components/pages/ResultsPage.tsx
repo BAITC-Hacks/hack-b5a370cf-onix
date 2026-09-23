@@ -6,7 +6,7 @@ import { ContributionChart, DistrictDumbbell } from "../charts";
 import { CityMap } from "../CityMap";
 import { StressTest } from "../StressTest";
 import { Timeline } from "../Timeline";
-import { timeline } from "@/lib/engine";
+import { getMeasure, timeline } from "@/lib/engine";
 import { ExplanationView } from "../ExplanationView";
 import { Heatmap } from "../Heatmap";
 import { Button, Card, CardTitle, Details, PageHeader, ScoreHero, StatusBadge } from "../ui";
@@ -20,6 +20,14 @@ export default function ResultsPage() {
   const [quarter, setQuarter] = useState(8);
   const points = timeline(app.decisions, eventId);
   const mapDistricts = points[quarter].districts;
+  const siteDecision = app.decisions.find((d) => d.districtId === "nura" && (d.measureId === "M4" || d.measureId === "M7"));
+  const project = siteDecision ? { kind: siteDecision.measureId === "M7" ? "school" as const : "park" as const, districtId: "nura" as const } : null;
+  const projectMeasure = siteDecision ? getMeasure(siteDecision.measureId) : null;
+  const projectIndicator = siteDecision?.measureId === "M7" ? "S1" as const : "E1" as const;
+  const projectDistrict = mapDistricts.find((d) => d.id === "nura")!;
+  const projectWithout = siteDecision
+    ? timeline(app.decisions.filter((d) => d !== siteDecision), eventId)[quarter].districts.find((d) => d.id === "nura")!
+    : null;
 
   const runOptimize = async () => {
     setOptimizing(true);
@@ -60,11 +68,29 @@ export default function ResultsPage() {
         <EventBar />
       </div>
 
-      <Card>
+      <Card id="city-map">
         <CardTitle hint={tr.lang === "kz" ? "Аудандар шараларыңызбен бірге «өседі». Тінтуірді апарсаңыз — толық көрсеткіштер." : "Районы «вырастают» вместе с вашими мерами. Наведите — все показатели."}>
           {tr.lang === "kz" ? "Астана 3D" : "Астана в 3D"}
         </CardTitle>
-        <CityMap districts={mapDistricts} weakest={result.weakestDistrict} />
+        {siteDecision && projectMeasure && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-accent/30 bg-accent-soft/25 p-3 text-sm">
+            <span className="text-xl" aria-hidden>{project?.kind === "school" ? "▤" : "♧"}</span>
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold">{tr.t("projectSite")} · {project?.kind === "school" ? tr.t("projectSchool") : tr.t("projectPark")}</div>
+              <p className="text-xs text-ink-2">
+                {tr.t("projectMarginalChange", {
+                  name: `${projectIndicator} ${tr.indicator(projectIndicator)}`,
+                  before: projectWithout!.after[projectIndicator],
+                  after: projectDistrict.after[projectIndicator],
+                })} · {tr.t("projectCostLag", { cost: projectMeasure.cost, quarter: projectMeasure.lag + 1 })}
+              </p>
+            </div>
+            <StatusBadge kind={quarter > projectMeasure.lag ? "good" : "info"}>
+              {quarter > projectMeasure.lag ? tr.t("projectOpen") : tr.t("projectBuilding")}
+            </StatusBadge>
+          </div>
+        )}
+        <CityMap districts={mapDistricts} weakest={result.weakestDistrict} project={project} quarter={quarter} />
         <div className="mt-5 border-t border-line pt-4">
           <div className="mb-3">
             <h3 className="font-semibold">{tr.t("tlTitle")}</h3>
