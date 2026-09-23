@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "node --test lib/*.test.ts",
     "predev": "node scripts/copy-maplibre.mjs",
-    "prebuild": "node scripts/copy-maplibre.mjs"
+    "prebuild": "node scripts/copy-maplibre.mjs",
+    "check": "npm test && npm run lint && npm run build && tsc --noEmit"
   },
   "dependencies": {
     "maplibre-gl": "^6.11.0",

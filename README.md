@@ -2,7 +2,7 @@
 
 **HackAlem AI · Спец-трек Astana Innovations · команда Onix**
 
-[![CI](https://github.com/BAITC-Hacks/hack-b5a370cf-onix/actions/workflows/ci.yml/badge.svg)](https://github.com/BAITC-Hacks/hack-b5a370cf-onix/actions/workflows/ci.yml)
+Полная проверка одной командой: `npm run check` (тесты → линтер → production-сборка → типы). Тот же набор описан в `.github/workflows/ci.yml`; GitHub Actions в организации хакатона в день соревнования были отключены на стороне GitHub (billing lock), поэтому проверки продублированы локальной командой.
 
 Веб-симулятор, в котором пользователь распределяет единый бюджет (100 у.е.) Астаны на **ровно 5 управленческих решений** по транспорту, экологии, соцсфере, безопасности и городским сервисам и сразу видит **Astana Quality of Life Score**, изменения показателей каждого района и **AI-объяснение**: сильные стороны, риски, компромиссы и конкретные рекомендации.
 
