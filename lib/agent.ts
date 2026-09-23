@@ -148,33 +148,100 @@ ${ev ? `\nАКТИВНО СОБЫТИЕ: ${ev.title}. ${ev.description}` : ""}
 - Если запрос невыполним по правилам — объясни, какое правило мешает.`;
 }
 
-async function chat(messages: unknown[], signal: AbortSignal) {
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    signal,
-    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    body: JSON.stringify({ model, temperature: 0.2, messages, tools: TOOLS, tool_choice: "auto" }),
-  });
-  if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
-  return { message: data.choices[0].message, model };
+interface ToolCall {
+  id: string;
+  name: string;
+  args: string;
 }
 
-export const agentAvailable = () => Boolean(process.env.OPENAI_API_KEY);
+/** Один шаг диалога с LLM: провайдер сам ведёт свою историю сообщений в своём формате. */
+interface Provider {
+  model: string;
+  name: "openai" | "anthropic";
+  step(signal: AbortSignal): Promise<{ text: string; calls: ToolCall[] }>;
+  addToolResults(results: { id: string; output: unknown }[]): void;
+}
+
+function openaiProvider(system: string, history: AgentMessage[]): Provider {
+  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const messages: unknown[] = [{ role: "system", content: system }, ...history];
+  return {
+    model,
+    name: "openai",
+    async step(signal) {
+      const res = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify({ model, temperature: 0.2, messages, tools: TOOLS, tool_choice: "auto" }),
+      });
+      if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const message = (await res.json()).choices[0].message;
+      messages.push(message);
+      const calls = ((message.tool_calls ?? []) as { id: string; function: { name: string; arguments: string } }[]).map((c) => ({ id: c.id, name: c.function.name, args: c.function.arguments }));
+      return { text: String(message.content ?? ""), calls };
+    },
+    addToolResults(results) {
+      for (const r of results) messages.push({ role: "tool", tool_call_id: r.id, content: JSON.stringify(r.output) });
+    },
+  };
+}
+
+function anthropicProvider(system: string, history: AgentMessage[]): Provider {
+  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+  const messages: unknown[] = history.map((m) => ({ role: m.role, content: m.content }));
+  const tools = TOOLS.map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
+  return {
+    model,
+    name: "anthropic",
+    async step(signal) {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model, max_tokens: 1500, temperature: 0.2, system, tools, messages }),
+      });
+      if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const data = await res.json();
+      const content: { type: string; text?: string; id?: string; name?: string; input?: unknown }[] = data.content ?? [];
+      messages.push({ role: "assistant", content });
+      return {
+        text: content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim(),
+        calls: content.filter((b) => b.type === "tool_use").map((b) => ({ id: b.id!, name: b.name!, args: JSON.stringify(b.input ?? {}) })),
+      };
+    },
+    addToolResults(results) {
+      messages.push({ role: "user", content: results.map((r) => ({ type: "tool_result", tool_use_id: r.id, content: JSON.stringify(r.output) })) });
+    },
+  };
+}
+
+/** Приоритет провайдера: LLM_PROVIDER, иначе Anthropic при наличии ключа, иначе OpenAI. */
+function pickProvider(system: string, history: AgentMessage[]): Provider | null {
+  const pref = process.env.LLM_PROVIDER;
+  const hasA = Boolean(process.env.ANTHROPIC_API_KEY);
+  const hasO = Boolean(process.env.OPENAI_API_KEY);
+  if (pref === "openai" && hasO) return openaiProvider(system, history);
+  if (pref === "anthropic" && hasA) return anthropicProvider(system, history);
+  if (hasA) return anthropicProvider(system, history);
+  if (hasO) return openaiProvider(system, history);
+  return null;
+}
+
+export const agentAvailable = () => Boolean(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY);
 
 export async function runAgent(history: AgentMessage[], current: Decision[], eventId: string | null, lang: "ru" | "kz" = "ru"): Promise<AgentReply> {
   if (!agentAvailable()) {
     return {
-      reply: "AI-советнику нужен LLM: добавьте OPENAI_API_KEY в .env.local. Остальные функции симулятора (расчёт, оптимум, шаблонный анализ) работают без ключа.",
+      reply: "AI-советнику нужен LLM: добавьте OPENAI_API_KEY или ANTHROPIC_API_KEY в .env.local. Остальные функции симулятора (расчёт, оптимум, шаблонный анализ) работают без ключа.",
       steps: [],
       error: "no-key",
     };
   }
 
   const langRule = lang === "kz" ? "\n\nВАЖНО: отвечай пользователю на казахском языке (қазақ тілі); районы: Есіл, Алматы, Сарыарқа, Байқоңыр, Нұра." : "";
-  const messages: unknown[] = [{ role: "system", content: systemPrompt(current, eventId) + langRule }, ...history.slice(-8)];
+  const provider = pickProvider(systemPrompt(current, eventId) + langRule, history.slice(-8))!;
   const steps: AgentStep[] = [];
   const toolOutputs: unknown[] = [history, current.length ? simulateTool(current, eventId) : null];
   let proposal: AgentReply["proposal"];
@@ -185,30 +252,28 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
     const r = simulate(lastFound, eventId);
     proposal = { decisions: lastFound, score: r.score, cost: r.cost, rationale: "Лучший план, найденный инструментом" };
   };
-  let model: string | undefined;
+  const model = `${provider.name} · ${provider.model}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   try {
     for (let turn = 0; turn < 6; turn++) {
-      const { message, model: m } = await chat(messages, controller.signal);
-      model = m;
-      messages.push(message);
-      const calls: { id: string; function: { name: string; arguments: string } }[] = message.tool_calls ?? [];
+      const { text, calls } = await provider.step(controller.signal);
       if (!calls.length) {
-        const reply = String(message.content ?? "").trim();
+        const reply = text.trim();
         attachFallback();
         return { reply, steps, proposal, model, unverifiedNumbers: findUnverifiedNumbersInText(reply, toolOutputs) };
       }
+      const results: { id: string; output: unknown }[] = [];
       for (const call of calls) {
         let output: unknown;
         try {
-          const args = JSON.parse(call.function.arguments || "{}");
-          if (call.function.name === "simulate_plan") {
+          const args = JSON.parse(call.args || "{}");
+          if (call.name === "simulate_plan") {
             const ds = toDecisions(args.decisions);
             output = simulateTool(ds, eventId);
             steps.push({ tool: "Симуляция", summary: `${planText(ds) || "пустой план"} → Score ${(output as { score: number }).score}` });
-          } else if (call.function.name === "find_best_plans") {
+          } else if (call.name === "find_best_plans") {
             const c: PlanConstraints = {
               mustInclude: toDecisions(args.must_include),
               exclude: args.exclude,
@@ -229,7 +294,7 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
               c.maxCost ? `бюджет ≤ ${c.maxCost}` : "",
             ].filter(Boolean);
             steps.push({ tool: "Перебор планов", summary: `${parts.join(" · ")} → ${plans.length ? `лучший ${plans[0].score}` : "решений нет"}` });
-          } else if (call.function.name === "stress_test_plan") {
+          } else if (call.name === "stress_test_plan") {
             const ds = toDecisions(args.decisions);
             const r = robustness(ds);
             output = {
@@ -240,12 +305,12 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
               невыполним_в_сценариях: r.failed,
             };
             steps.push({ tool: "Стресс-тест", summary: `${planText(ds)} → худший ${r.worst ?? "—"}, провалов ${r.failed}` });
-          } else if (call.function.name === "find_robust_plan") {
+          } else if (call.name === "find_robust_plan") {
             const plans = optimizeRobust(3);
             if (plans[0]) lastFound = plans[0].decisions;
             output = plans.map((p) => ({ план: planText(p.decisions), худший_score: p.worst, score_без_событий: p.base, стоимость: p.cost }));
             steps.push({ tool: "Поиск устойчивого плана", summary: `лучший худший случай ${plans[0]?.worst}` });
-          } else if (call.function.name === "propose_plan") {
+          } else if (call.name === "propose_plan") {
             const ds = toDecisions(args.decisions);
             const v = validate(ds, eventId);
             if (v.ok) {
@@ -262,8 +327,9 @@ export async function runAgent(history: AgentMessage[], current: Decision[], eve
           output = { ошибка: e instanceof Error ? e.message : String(e) };
         }
         toolOutputs.push(output);
-        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(output) });
+        results.push({ id: call.id, output });
       }
+      provider.addToolResults(results);
     }
     return { reply: "Агент не уложился в лимит шагов — уточните запрос.", steps, proposal, model };
   } catch (e) {
